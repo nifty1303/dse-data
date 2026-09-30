@@ -1,0 +1,40 @@
+name: Weekly fundamentals
+
+on:
+  schedule:
+    # 16:00 UTC = 10:00 PM Dhaka, every Saturday
+    - cron: "0 16 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dse-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Update fundamentals
+        run: python update.py fundamentals
+
+      - name: Save to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "Fundamentals update $(date -u +%F)"
+          git pull --rebase
+          git push

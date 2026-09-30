@@ -2,14 +2,15 @@ name: Daily prices
 
 on:
   schedule:
-    # 10:20 UTC = 4:20 PM Dhaka, Sunday to Thursday
-    - cron: "20 10 * * 0-4"
+    # Times are in UTC (Dhaka = UTC + 6). Days 0-4 = Sunday to Thursday.
+    - cron: "45 8 * * 0-4"   # 2:45 PM Dhaka: today only
+    - cron: "0 10 * * 0-4"   # 4:00 PM Dhaka: last 5 days
   workflow_dispatch:
     inputs:
       mode:
-        description: "daily = last N days, fix = replace specific dates"
+        description: "today = today only, daily = last N days, fix = replace specific dates"
         type: choice
-        options: [daily, fix]
+        options: [daily, today, fix]
         default: daily
       lookback_days:
         description: "daily: how many days to look back"
@@ -23,6 +24,11 @@ on:
 
 permissions:
   contents: write
+
+# Runs of both workflows wait for each other, so two updates never save at the same time.
+concurrency:
+  group: dse-data
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -40,7 +46,9 @@ jobs:
 
       - name: Update prices
         run: |
-          if [ "${{ inputs.mode }}" = "fix" ]; then
+          if [ "${{ github.event.schedule }}" = "45 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
+            python update.py today
+          elif [ "${{ inputs.mode }}" = "fix" ]; then
             python update.py fix ${{ inputs.fix_start }} ${{ inputs.fix_end }}
           else
             python update.py daily ${{ inputs.lookback_days || '5' }}
@@ -52,4 +60,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
           git diff --cached --quiet || git commit -m "Prices update $(date -u +%F)"
+          git pull --rebase
           git push

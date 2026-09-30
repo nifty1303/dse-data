@@ -268,3 +268,7 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
   .mini .bs { grid-column: 1 / -1; }
   .contrib { grid-template-columns: 110px 1fr 44px; }
 }
+
+.expbox { background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+.expbox b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.filters .seg button { padding: 6px 16px; }

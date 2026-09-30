@@ -1,0 +1,55 @@
+name: Daily prices
+
+on:
+  schedule:
+    # 10:20 UTC = 4:20 PM Dhaka, Sunday to Thursday
+    - cron: "20 10 * * 0-4"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily = last N days, fix = replace specific dates"
+        type: choice
+        options: [daily, fix]
+        default: daily
+      lookback_days:
+        description: "daily: how many days to look back"
+        default: "5"
+      fix_start:
+        description: "fix: start date (YYYY-MM-DD)"
+        default: ""
+      fix_end:
+        description: "fix: end date (YYYY-MM-DD); leave empty for one day"
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Update prices
+        run: |
+          if [ "${{ inputs.mode }}" = "fix" ]; then
+            python update.py fix ${{ inputs.fix_start }} ${{ inputs.fix_end }}
+          else
+            python update.py daily ${{ inputs.lookback_days || '5' }}
+          fi
+
+      - name: Save to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "Prices update $(date -u +%F)"
+          git push

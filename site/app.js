@@ -31,7 +31,48 @@
   const HZ = () => S.summary.horizons.short;
   const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } };
   const load = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
-  const ORDER = ["Strong Buy", "Buy", "Sell", "Strong Sell"];
+  const ORDER = ["Buy", "Neutral", "Sell"];
+
+  // ---------- My stocks: watchlist, holdings and settings, saved in this browser only
+  const MY_KEY = "dse-my-v1";
+  function myLoad() {
+    try {
+      const x = JSON.parse(load(MY_KEY) || "{}");
+      return { watch: x.watch || {}, holdings: x.holdings || [], capital: x.capital || 500000, risk: x.risk || 1,
+        seen: x.seen || null, changes: x.changes || null };
+    } catch (e) { return { watch: {}, holdings: [], capital: 500000, risk: 1, seen: null, changes: null }; }
+  }
+  let MY = myLoad();
+  const mySave = () => { store(MY_KEY, JSON.stringify(MY)); navCount(); };
+  function navCount() {
+    const a = document.querySelector('nav.tabs a[data-v="mine"]');
+    if (a) a.textContent = `My stocks${Object.keys(MY.watch).length + MY.holdings.length ? ` (${Object.keys(MY.watch).length + MY.holdings.length})` : ""}`;
+  }
+  function starBtn(sym) {
+    const on = !!MY.watch[sym];
+    return h("button", { class: "star" + (on ? " on" : ""), type: "button", title: on ? "Remove from watchlist" : "Add to watchlist",
+      "aria-label": on ? `Remove ${sym} from watchlist` : `Add ${sym} to watchlist`, "aria-pressed": String(on),
+      onclick: e => {
+        e.stopPropagation();
+        if (MY.watch[sym]) delete MY.watch[sym];
+        else MY.watch[sym] = { added: S.summary.asof, tag: S.bySym[sym] ? S.bySym[sym].s.verdict : null };
+        mySave();
+        const b = e.currentTarget, now = !!MY.watch[sym];
+        b.classList.toggle("on", now); b.textContent = now ? "★" : "☆"; b.setAttribute("aria-pressed", String(now));
+      } }, on ? "★" : "☆");
+  }
+  function sizing(r) {
+    const p = r.s.plan, price = r.close;
+    const perShare = Math.max(price - p.stop, 0.01);
+    let qty = Math.floor(MY.capital * MY.risk / 100 / perShare);
+    const limits = [];
+    const capAlloc = Math.floor(MY.capital * 0.15 / price);
+    if (capAlloc < qty) { qty = capAlloc; limits.push("15% of your capital in one share"); }
+    const capLiq = p.liq ? Math.floor(p.liq * 1e6 * 0.10 / price) : qty;
+    if (capLiq < qty) { qty = capLiq; limits.push("10% of its average daily turnover, so you can get out"); }
+    qty = Math.max(qty, 0);
+    return { qty, cost: qty * price, loss: qty * perShare, limits };
+  }
   const PHASE_ICON = { Bottoming: "↺", "Early rise": "↗", "Mid rise": "↗", "Late rise": "⤴", Topping: "↻", "Early fall": "↘", "Mid fall": "↘", "Late fall": "⤵", Sideways: "→" };
   const upPhase = p => /rise|Bottoming/.test(p);
 
@@ -58,6 +99,64 @@
       h("div", null, h("b", { class: cls }, spct(o.exp)), " expected in 2 weeks",
         o.target != null ? h("span", { class: "muted" }, ` → Tk ${num(o.target)}`) : null),
       o.path_lo != null ? h("div", { class: "small muted" }, `Likely range Tk ${num(o.path_lo)} – ${num(o.path_hi)} (its usual 2-week spread)`) : null);
+  }
+  const pl = (label, value, sub, cls) => h("div", { class: "pl" }, h("span", null, label), h("b", null, value),
+    sub ? h("small", { class: cls || "" }, sub) : null);
+  function planLine(r) {
+    const o = r.s, p = o.plan;
+    if (o.verdict === "Sell") return h("div", { class: "plan sellplan small" }, h("b", null, "Plan: "), `avoid buying; if you hold it, consider selling or exit below Tk ${num(p.stop)}.`);
+    return h("div", { class: "plan small" }, h("b", null, "Plan: "),
+      `buy Tk ${num(p.entry_lo)}–${num(p.entry_hi)} · stop ${num(p.stop)} · target ${num(p.take_profit)} · reward:risk ${num(p.rr, 1)} `,
+      h("span", { class: "rr rr-" + p.rr_label.toLowerCase() }, p.rr_label));
+  }
+  function planCard(r) {
+    const o = r.s, p = o.plan;
+    if (o.verdict === "Sell") {
+      return h("div", { class: "card plan-card" }, h("h3", null, "Trade plan"),
+        h("p", null, h("b", null, "Avoid buying. "), `If you already hold ${r.sym}, the model expects it to keep falling: consider selling, or at least exit if it closes below Tk ${num(p.stop)} (${p.stop_basis}).`));
+    }
+    const sz = sizing(r);
+    const capIn = h("input", { type: "number", min: "1000", step: "1000", value: MY.capital, "aria-label": "Your capital in Taka" });
+    const riskIn = h("input", { type: "number", min: "0.1", max: "10", step: "0.1", value: MY.risk, "aria-label": "Risk per trade in percent" });
+    const onChange = () => { MY.capital = Math.max(1000, +capIn.value || 0); MY.risk = Math.min(10, Math.max(0.1, +riskIn.value || 1)); mySave(); route(); };
+    capIn.addEventListener("change", onChange); riskIn.addEventListener("change", onChange);
+    return h("div", { class: "card plan-card" },
+      h("h3", null, "Trade plan · next 2 weeks"),
+      o.verdict === "Neutral" ? h("p", { class: "note", style: "margin-top:0" },
+        `${r.sym} is Neutral: there's no fresh Buy signal. The levels below are for reference, e.g. if you already hold it or want to wait for a Buy.`) : null,
+      h("div", { class: "plan-row" },
+        pl("Buy zone", `Tk ${num(p.entry_lo)} – ${num(p.entry_hi)}`, "don't chase above the top"),
+        pl("Stop-loss", `Tk ${num(p.stop)}`, spct(-p.risk_pct), "down"),
+        pl("Take profit", `Tk ${num(p.take_profit)}`, spct(p.reward_pct), "up"),
+        pl("Reward : risk", `${num(p.rr, 1)} : 1`, p.rr_label, "rr rr-" + p.rr_label.toLowerCase())),
+      h("p", { class: "small muted" }, `Stop-loss is ${p.stop_basis}. Take profit is the top of its likely 2-week range. ` +
+        `Review after ${p.hold_days} trading days. Reward:risk of 1.5 or more is Good, 1–1.5 Fair, under 1 Poor (the likely gain is smaller than the likely loss if the stop is hit).`),
+      h("div", { class: "sizer" },
+        h("label", null, "Your capital (Tk) ", capIn), h("label", null, "Risk per trade (%) ", riskIn)),
+      h("p", null, sz.qty
+        ? [h("b", null, `Buy about ${sz.qty.toLocaleString()} shares (≈ Tk ${Math.round(sz.cost).toLocaleString()}).`),
+          ` If the stop-loss is hit you'd lose about Tk ${Math.round(sz.loss).toLocaleString()} (${pct(sz.loss / MY.capital, 1)} of your capital).`,
+          sz.limits.length ? h("span", { class: "muted" }, ` Capped at ${sz.limits.join(" and ")}.`) : null]
+        : "Your capital is too small for even one share at this risk level."),
+      h("div", { class: "chips" },
+        h("button", { class: "chip", type: "button", onclick: () => { addHolding(r.sym, sz.qty || 1, r.close); location.hash = "#mine"; } }, "＋ Add to my holdings at today's price"),
+        h("button", { class: "chip", type: "button", onclick: () => { if (!MY.watch[r.sym]) { MY.watch[r.sym] = { added: S.summary.asof, tag: o.verdict }; mySave(); } location.hash = "#mine"; } }, "☆ Watch it")));
+  }
+  function tagPanel(o) {
+    const vc = (HZ().verdict_check || []).find(v => v.verdict === o.verdict);
+    const rules = o.verdict === "Sell" ? [["Sell conditions", o.rule_sell]] : o.verdict === "Buy" ? [["Buy conditions", o.rule_buy]]
+      : [["Buy conditions", o.rule_buy], ["Sell conditions", o.rule_sell]];
+    return h("div", { class: "card decision" },
+      h("div", { class: "dh" }, h("h3", null, "Why this tag"), badge(o.verdict)),
+      h("p", { style: "margin:0" }, o.tag_why),
+      rules.map(([name, checks]) => h("div", { class: "rule" }, h("div", { class: "small muted" }, name + (o.verdict === "Neutral" ? " (both must hold)" : "")),
+        checks.map(c => h("div", { class: "check " + (c.ok ? "ok" : "no") }, h("span", { class: "mark", "aria-hidden": "true" }, c.ok ? "✓" : "✗"), h("span", null, (c.ok ? "" : "Not met: ") + c.text))))),
+      h("div", { class: "small" }, o.tag_days >= 60 ? `Tagged ${o.verdict} for 60+ trading days.`
+        : `Tagged ${o.verdict} for ${o.tag_days} trading day${o.tag_days === 1 ? "" : "s"} (since ${Charts.fmtDate(o.tag_since)}).`),
+      vc ? h("div", { class: "small muted" }, `Track record: on unseen days, shares tagged ${o.verdict} rose ${pct(vc.rose)} of the time over the next 2 weeks ` +
+        `(median ${spct(vc.median, 2)}; ${pct(vc.down3)} fell more than 3%).`) : null,
+      o.why.length ? [h("h4", null, "What supports it"), h("ul", { class: "why" }, o.why.map(x => h("li", null, x)))] : null,
+      o.caution.length ? [h("h4", null, "What argues against"), h("ul", { class: "caution" }, o.caution.map(x => h("li", null, x)))] : null);
   }
   function phaseChip(o) {
     return h("span", { class: "phase " + (upPhase(o.phase) ? "p-up" : o.phase === "Sideways" ? "" : "p-down"), title: o.journey },
@@ -116,7 +215,7 @@
   }
   function dist() {
     const v = HZ().verdicts, total = ORDER.reduce((a, k) => a + (v[k] || 0), 0);
-    const col = { "Strong Buy": "--buy-strong", Buy: "--buy", Sell: "--sell", "Strong Sell": "--sell-strong" };
+    const col = { Buy: "--buy-strong", Neutral: "--neutral", Sell: "--sell-strong" };
     return h("div", { class: "card", style: "padding:12px 16px;margin-bottom:16px" },
       h("div", { class: "small muted" }, `All ${total} shares today, next 2 weeks`),
       h("div", { class: "dist" }, ORDER.filter(k => v[k]).map(k => h("span", {
@@ -133,15 +232,14 @@
         h("div", { class: "rank" }, pos, move(o)),
         h("div", { class: "name" }, h("div", null, h("span", { class: "sym" }, r.sym), " ", badge(o.verdict)),
           h("div", { class: "meta" }, `${r.sector} · Category ${r.cat}`), h("div", null, phaseChip(o), " ", tags(r))),
-        h("div", { class: "price" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)))),
+        h("div", { class: "price" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg))),
+        starBtn(r.sym)),
       pathChart(r),
       expBlock(o),
-      h("div", { class: "journey small" }, o.journey),
-      bs(o),
-      h("div", { class: "nums" }, moveStat(o), confStat(o),
-        stat("to regular high", spct(r.up_room, 0)), stat("to 2-yr low", spct(r.down_risk == null ? null : -r.down_risk, 0))),
-      lines.length ? h("ul", { class: "why" }, lines.map(t => h("li", null, t))) : null,
-      o.days_top > 1 && side !== "sell" ? h("div", { class: "other" }, `${o.days_top} days in the Top 20`) : null);
+      h("div", { class: "tagwhy small" }, o.tag_why),
+      planLine(r),
+      h("div", { class: "nums" }, moveStat(o), confStat(o), stat("tagged for", o.tag_days >= 60 ? "60+ d" : `${o.tag_days}d`)),
+      lines.length ? h("ul", { class: "why" }, lines.map(t => h("li", null, t))) : null);
   }
   function miniRow(r) {
     const o = r.s;
@@ -163,6 +261,21 @@
     }
     return out;
   }
+  function searchBox() {
+    const results = h("div", { class: "results", "aria-live": "polite" });
+    const render = q => {
+      results.textContent = "";
+      q = q.trim().toUpperCase();
+      if (!q) return;
+      const hits = S.summary.stocks.filter(r => r.sym.includes(q))
+        .sort((a, b) => (b.sym.startsWith(q) - a.sym.startsWith(q)) || a.sym.localeCompare(b.sym)).slice(0, 4);
+      hits.length ? hits.forEach(r => results.appendChild(quickCard(r))) : results.appendChild(h("div", { class: "empty" }, `No share matches “${q}”`));
+    };
+    const input = h("input", { type: "search", placeholder: "Search any share, e.g. BRACBANK", autocomplete: "off", value: S.topQ || "",
+      "aria-label": "Search shares", oninput: e => { S.topQ = e.target.value; render(e.target.value); } });
+    if (S.topQ) render(S.topQ);
+    return h("div", null, h("div", { class: "search" }, h("span", { class: "ico", "aria-hidden": "true" }, "⌕"), input), results);
+  }
   function viewTop() {
     const s = S.summary, hz = HZ(), side = S.side, sector = S.sector, phase = S.phase || "";
     const list = pickList(side, sector, phase);
@@ -171,12 +284,13 @@
     const sideBtn = (v, label) => h("button", { class: side === v ? "on" : "", onclick: () => { S.side = v; route(); } }, label);
     const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
     const sub = side === "sell"
-      ? "Expected to fall over the next 2 weeks. Strong Sell = expected −0.5% or worse while the share is still falling or topping out."
-      : "Expected to rise over the next 2 weeks. Strong Buy = expected +1% or more while the share is bottoming, late in a fall, or early in a rise.";
+      ? "Sell = expected to move −0.5% or worse over the next 2 weeks while the share is still falling or topping out."
+      : "Buy = expected to rise +1% or more over the next 2 weeks while the share is bottoming, late in a fall, or early in a rise.";
     const showExtras = side === "buy" && !sector && !phase;
-    const wrongSide = list.filter(r => side === "buy" ? r.s.exp <= 0 : r.s.exp > 0).length;
+    const wrongSide = list.filter(r => r.s.verdict !== (side === "buy" ? "Buy" : "Sell")).length;
     return h("div", null,
       moodBanner(s.mood),
+      searchBox(),
       h("div", { class: "page-head" },
         h("div", null, h("h1", null, title), h("p", { class: "sub", style: "margin:0" }, sub + (sector ? "" : " At most 4 per sector.")))),
       h("div", { class: "filters" },
@@ -188,7 +302,7 @@
       dist(),
       timingTip(),
       wrongSide ? h("div", { class: "note", style: "margin-bottom:12px" },
-        `${wrongSide} share(s) in this list are expected to move the other way; they are the closest available with these filters.`) : null,
+        `${wrongSide} share(s) in this list are Neutral: there aren't ${list.length} ${side === "buy" ? "Buys" : "Sells"} with these filters, so the next best are shown.`) : null,
       list.length ? h("div", { class: "picks" }, list.map((r, i) => pickCard(r, i + 1, side))) : h("div", { class: "empty" }, "No shares in this sector."),
       showExtras ? h("div", { class: "grid two", style: "margin-top:14px" },
         h("div", { class: "card" }, h("h3", null, "New in the Top 20 today"),
@@ -239,11 +353,12 @@
     return h("div", { class: "qcard", onclick: () => go(r.sym) },
       h("div", { class: "head" }, h("div", null, h("b", { style: "font-size:16px" }, r.sym), " ", badge(o.verdict), " ",
         h("span", { class: "muted small" }, `${r.sector} · Cat ${r.cat}`)),
-        h("div", { class: "num" }, h("b", null, num(r.close)), " ", h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)))),
+        h("div", { class: "num", style: "display:flex;align-items:center;gap:8px" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)), starBtn(r.sym))),
       h("div", { class: "qgrid" },
         h("div", null, bs(o),
           h("div", { class: "mv" }, h("b", { class: o.exp > 0 ? "up" : o.exp < 0 ? "down" : "" }, `Expected ${spct(o.exp)} → Tk ${num(o.target)}`),
-            ` · ${o.phase} · Confidence ${o.conf}`)),
+            ` · ${o.phase} · Confidence ${o.conf}`),
+          h("div", { class: "tagwhy small" }, o.tag_why), planLine(r)),
         pathChart(r)));
   }
   function viewAll() {
@@ -383,14 +498,23 @@
       h("h2", null, "How the verdict is decided"),
       h("ul", null,
         h("li", null, h("b", null, "Expected move: "), "the chance of a 3%+ rise times the average such rise, plus the chance of a 3%+ fall times the average such fall, plus the rest times the average small move. It is also turned into a target price, with a likely range from the share's own usual 2-week spread."),
-        h("li", null, h("b", null, "Direction: "), "expected move above 0 = Buy side; 0 or below = Sell side."),
         h("li", null, h("b", null, "Journey: "), "where the share is on its current swing, found automatically: Bottoming (a long fall turning up), Early / Mid / Late rise, Topping (a long rise turning down), Early / Mid / Late fall, or Sideways. Late means the swing is already longer than that share's typical swing."),
-        h("li", null, h("b", null, "Strong Buy: "), "expected move +1% or more while the share is bottoming, late in a fall, or early in a rise."),
-        h("li", null, h("b", null, "Strong Sell: "), "expected move −0.5% or worse while the share is falling (early, mid or late) or topping out."),
-        h("li", null, h("b", null, "Why these journeys: "), "on unseen data, shares expected to rise that were bottoming, late in a fall or early in a rise went up most often (about 55%); shares expected to fall that were still falling or topping went up least often (34–41%). The Track record page shows how each verdict turned out."),
+        h("li", null, h("b", null, "Buy: "), "expected move +1% or more AND the share is bottoming, late in a fall, or early in a rise. Both must hold."),
+        h("li", null, h("b", null, "Sell: "), "expected move −0.5% or worse AND the share is still falling (early, mid or late) or topping out. Both must hold."),
+        h("li", null, h("b", null, "Neutral: "), "everything else. Each share's page shows which conditions it met and missed."),
+        h("li", null, h("b", null, "Why these rules: "), "on unseen data, shares meeting the Buy conditions rose most often (about 56%, median +0.9% in 2 weeks); shares meeting the Sell conditions rose least often (about 40%, median −0.6%). The Track record page shows the full check."),
         h("li", null, h("b", null, "Buy / Sell split and move chance: "), "if the share moves more than 3%, how likely up vs down; and how likely it moves that much at all."),
         h("li", null, h("b", null, "Confidence (0–100): "), "history, liquidity, cycle regularity and how clear-cut the split is. Junk shares are scaled down by a quarter, dead ones by half."),
-        h("li", null, h("b", null, "Ranking: "), "Strong Buys first, then Buys, each ordered by expected move; at most 4 per sector when showing all sectors.")),
+        h("li", null, h("b", null, "Ranking: "), "Buys first, then Neutral, each ordered by expected move; at most 4 per sector when showing all sectors.")),
+      h("h2", null, "Trade plans"),
+      h("ul", null,
+        h("li", null, h("b", null, "Buy zone: "), "from about one normal day's move below today's price to half a day's move above it. Buying above the zone is chasing."),
+        h("li", null, h("b", null, "Stop-loss: "), "just below the nearest recent support 2–12% under the price (the last swing low from the past ~3 months, else the lowest close of the last 20 sessions); if neither fits, 1.2× the share's usual 2-week swing."),
+        h("li", null, h("b", null, "Take profit: "), "the top of the share's likely 2-week range."),
+        h("li", null, h("b", null, "Reward : risk: "), "(take profit − price) ÷ (price − stop). 1.5 or more Good, 1–1.5 Fair, under 1 Poor."),
+        h("li", null, h("b", null, "Position size: "), "shares so that hitting the stop costs your chosen % of capital (default 1%), capped at 15% of capital per share and 10% of its daily turnover.")),
+      h("h2", null, "My stocks"),
+      p("Star any share to watch it, and add what you own with your buy price. After each update the My stocks page lists tag changes, watched Buys inside their buy zone, and holdings near their stop-loss or tagged Sell. It is saved only in your browser; use Export / Import to back it up or move it."),
       h("h2", null, "Ranges"),
       h("ul", null,
         h("li", null, h("b", null, "Regular range: "), "the 10th to 90th percentile of all closing prices over the last 2 years."),
@@ -435,7 +559,7 @@
     const out = h("div", null,
       h("a", { class: "back", href: "#top", onclick: e => { if (history.length > 1) { e.preventDefault(); history.back(); } } }, "← Back"),
       h("div", { class: "hero" },
-        h("div", null, h("h1", null, d.sym), h("div", { class: "muted" }, `${d.sector} · Category ${d.cat}`), h("div", null, tags(d))),
+        h("div", null, h("h1", null, d.sym, " ", starBtn(d.sym)), h("div", { class: "muted" }, `${d.sector} · Category ${d.cat}`), h("div", null, tags(d))),
         h("div", { style: "text-align:right" }, h("div", { class: "price num" }, num(d.close)), h("div", { class: d.chg >= 0 ? "up" : "down" }, spct(d.chg) + " today"))),
       h("div", { class: "grid two" },
         h("div", { class: "card decision" },
@@ -444,9 +568,8 @@
           h("div", null, phaseChip(o)), h("div", { class: "journey" }, o.journey),
           bs(o, true),
           h("div", { style: "display:flex;gap:22px;flex-wrap:wrap" }, moveStat(o), confStat(o), stat("rank", `${o.rank} / ${S.summary.universe}`))),
-        h("div", { class: "card decision" },
-          o.why.length ? [h("h4", null, "Reasons to buy"), h("ul", { class: "why" }, o.why.map(x => h("li", null, x)))] : h("h4", null, "No strong reasons to buy"),
-          o.caution.length ? [h("h4", null, "Reasons for caution"), h("ul", { class: "caution" }, o.caution.map(x => h("li", null, x)))] : null)),
+        tagPanel(o)),
+      h("div", { style: "margin-top:12px" }, planCard(d)),
       h("h2", null, "The journey so far, and the expected path"),
       rangeBtns,
       h("div", { class: "legend" },
@@ -551,8 +674,123 @@
     return out;
   }
 
+  // ---------- My stocks
+  function addHolding(sym, qty, price) {
+    MY.holdings.push({ sym, qty: Math.max(1, Math.round(qty)), price: +price, date: S.summary.asof });
+    mySave();
+  }
+  function holdingAdvice(hd, r) {
+    const o = r.s, p = o.plan, pnl = r.close / hd.price - 1;
+    if (o.verdict === "Sell") return ["bad", "Sell: expected to fall while still in a falling or topping journey"];
+    if (r.close <= p.stop * 1.02) return ["bad", `Near its stop-loss (Tk ${num(p.stop)}): be ready to exit`];
+    if (pnl >= 0.08 && o.verdict !== "Buy") return ["info", `Up ${spct(pnl)} and no longer a Buy: consider taking profit`];
+    if (o.verdict === "Buy") return ["good", `Hold: still a Buy (take profit near Tk ${num(p.take_profit)}, stop Tk ${num(p.stop)})`];
+    return ["info", `Hold: Neutral. Keep a stop-loss at Tk ${num(p.stop)}`];
+  }
+  function changes() {
+    const asof = S.summary.asof;
+    const syms = [...new Set([...Object.keys(MY.watch), ...MY.holdings.map(x => x.sym)])].filter(x => S.bySym[x]);
+    let stored = [];
+    if (MY.changes && MY.changes.asof === asof) stored = MY.changes.items;
+    else {
+      const prev = (MY.seen && MY.seen.tags) || {};
+      for (const sym of syms) {
+        const t = S.bySym[sym].s.verdict;
+        if (prev[sym] && prev[sym] !== t) stored.push({ sym, kind: t === "Buy" ? "good" : t === "Sell" ? "bad" : "info", text: `tag changed ${prev[sym]} → ${t}` });
+      }
+      MY.seen = { asof, tags: Object.fromEntries(syms.map(x => [x, S.bySym[x].s.verdict])) };
+      MY.changes = { asof, items: stored };
+      store(MY_KEY, JSON.stringify(MY));
+    }
+    const live = [];
+    for (const sym of Object.keys(MY.watch)) {
+      const r = S.bySym[sym]; if (!r) continue;
+      const p = r.s.plan;
+      if (r.s.verdict === "Buy" && r.close >= p.entry_lo && r.close <= p.entry_hi) live.push({ sym, kind: "good", text: `is a Buy and inside its buy zone (Tk ${num(p.entry_lo)}–${num(p.entry_hi)})` });
+    }
+    for (const hd of MY.holdings) {
+      const r = S.bySym[hd.sym]; if (!r) continue;
+      const [kind, text] = holdingAdvice(hd, r);
+      if (kind === "bad") live.push({ sym: hd.sym, kind, text: text.charAt(0).toLowerCase() + text.slice(1) });
+    }
+    return stored.concat(live);
+  }
+  function viewMine() {
+    const s = S.summary;
+    const alerts = changes();
+    const watch = Object.entries(MY.watch).filter(([x]) => S.bySym[x]);
+    const symIn = h("input", { list: "symlist", placeholder: "Symbol", "aria-label": "Symbol", style: "width:140px;text-transform:uppercase" });
+    const qtyIn = h("input", { type: "number", min: "1", placeholder: "Shares", "aria-label": "Number of shares", style: "width:110px" });
+    const priceIn = h("input", { type: "number", min: "0", step: "0.1", placeholder: "Buy price", "aria-label": "Buy price", style: "width:120px" });
+    const msg = h("span", { class: "small muted" });
+    const add = () => {
+      const sym = symIn.value.trim().toUpperCase();
+      if (!S.bySym[sym]) { msg.textContent = `“${sym}” isn't a listed share.`; return; }
+      if (!(+qtyIn.value > 0) || !(+priceIn.value > 0)) { msg.textContent = "Enter the number of shares and your buy price."; return; }
+      addHolding(sym, +qtyIn.value, +priceIn.value); route();
+    };
+    symIn.addEventListener("change", () => { const r = S.bySym[symIn.value.trim().toUpperCase()]; if (r && !priceIn.value) priceIn.value = r.close; });
+    const capIn = h("input", { type: "number", min: "1000", step: "1000", value: MY.capital, "aria-label": "Your capital in Taka" });
+    const riskIn = h("input", { type: "number", min: "0.1", max: "10", step: "0.1", value: MY.risk, "aria-label": "Risk per trade in percent" });
+    const saveSettings = () => { MY.capital = Math.max(1000, +capIn.value || 0); MY.risk = Math.min(10, Math.max(0.1, +riskIn.value || 1)); mySave(); };
+    capIn.addEventListener("change", saveSettings); riskIn.addEventListener("change", saveSettings);
+    let invested = 0, value = 0;
+    MY.holdings.forEach(hd => { const r = S.bySym[hd.sym]; invested += hd.qty * hd.price; value += hd.qty * (r ? r.close : hd.price); });
+    const fileIn = h("input", { type: "file", accept: "application/json", style: "display:none", onchange: e => {
+      const f = e.target.files[0]; if (!f) return;
+      f.text().then(t => { const x = JSON.parse(t); MY = { ...MY, watch: x.watch || {}, holdings: x.holdings || [], capital: x.capital || MY.capital, risk: x.risk || MY.risk }; mySave(); route(); })
+        .catch(() => { msg.textContent = "That file couldn't be read."; });
+    } });
+    return h("div", null,
+      h("h1", null, "My stocks"),
+      h("p", { class: "sub" }, "Your watchlist and holdings, checked against today's tags and trade plans. Saved in this browser only: use Export to keep a backup or move to another device."),
+      h("div", { class: "card", style: "margin-bottom:12px" }, h("h3", null, "What changed · data to " + Charts.fmtDate(s.asof)),
+        alerts.length ? h("ul", { class: "alerts" }, alerts.map(a => h("li", { class: "al-" + a.kind, onclick: () => go(a.sym) }, h("b", null, a.sym), " ", a.text)))
+          : h("div", { class: "empty small" }, watch.length || MY.holdings.length ? "Nothing new since your last visit." : "Star shares (☆) or add holdings below, and changes will show up here after each update.")),
+      h("h2", null, `Holdings (${MY.holdings.length})`),
+      MY.holdings.length ? h("div", { class: "grid tiles", style: "margin-bottom:10px" },
+        tile("Invested", `Tk ${Math.round(invested).toLocaleString()}`), tile("Value now", `Tk ${Math.round(value).toLocaleString()}`),
+        tile("Profit / loss", `${value >= invested ? "+" : "−"}Tk ${Math.abs(Math.round(value - invested)).toLocaleString()}`, spct(invested ? value / invested - 1 : 0), value >= invested ? "up" : "down")) : null,
+      h("div", { class: "filters" }, symIn, qtyIn, priceIn, h("button", { class: "chip", type: "button", onclick: add }, "＋ Add holding"), msg,
+        h("datalist", { id: "symlist" }, s.stocks.map(r => h("option", { value: r.sym })))),
+      MY.holdings.length ? h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Share", "Shares", "Bought at", "Now", "P/L", "Tag", "What to do", ""].map((c, i) => h("th", { class: i >= 1 && i <= 4 ? "r" : "" }, c)))),
+        h("tbody", null, MY.holdings.map((hd, i) => {
+          const r = S.bySym[hd.sym];
+          if (!r) return h("tr", null, h("td", null, hd.sym), h("td", { colspan: 7, class: "muted" }, "No longer listed"));
+          const pnl = r.close / hd.price - 1, [kind, adv] = holdingAdvice(hd, r);
+          return h("tr", { onclick: () => go(hd.sym) }, h("td", null, h("b", null, hd.sym)), h("td", { class: "r" }, hd.qty.toLocaleString()),
+            h("td", { class: "r" }, num(hd.price)), h("td", { class: "r" }, num(r.close)),
+            h("td", { class: "r " + (pnl >= 0 ? "up" : "down") }, `${spct(pnl)} (Tk ${Math.round((r.close - hd.price) * hd.qty).toLocaleString()})`),
+            h("td", null, badge(r.s.verdict)), h("td", { class: "adv adv-" + kind, style: "white-space:normal;min-width:260px" }, adv),
+            h("td", null, h("button", { class: "chip", type: "button", title: "Remove", onclick: e => { e.stopPropagation(); MY.holdings.splice(i, 1); mySave(); route(); } }, "✕")));
+        })))) : h("div", { class: "empty small" }, "No holdings yet."),
+      h("h2", null, `Watchlist (${watch.length})`),
+      watch.length ? h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Share", "Price", "Tag", "Expected 2 wks", "Journey", "Plan", "Since you added", ""].map((c, i) => h("th", { class: i === 1 || i === 3 ? "r" : "" }, c)))),
+        h("tbody", null, watch.map(([sym, w]) => {
+          const r = S.bySym[sym], o = r.s, p = o.plan;
+          return h("tr", { onclick: () => go(sym) }, h("td", null, h("b", null, sym)), h("td", { class: "r" }, num(r.close)),
+            h("td", null, badge(o.verdict)), h("td", { class: "r " + (o.exp > 0 ? "up" : "down") }, spct(o.exp)), h("td", null, o.phase),
+            h("td", { class: "small", style: "white-space:normal;min-width:220px" }, o.verdict === "Sell" ? "Avoid" : `Buy ${num(p.entry_lo)}–${num(p.entry_hi)}, stop ${num(p.stop)}, target ${num(p.take_profit)} (${p.rr_label})`),
+            h("td", { class: "small muted" }, w.tag && w.tag !== o.verdict ? `${w.tag} → ${o.verdict}` : `added ${Charts.fmtDate(w.added)}`),
+            h("td", null, starBtn(sym)));
+        })))) : h("div", { class: "empty small" }, "Tap ☆ on any share to watch it."),
+      h("h2", null, "Position sizing"),
+      h("div", { class: "card" },
+        h("div", { class: "sizer" }, h("label", null, "Your capital (Tk) ", capIn), h("label", null, "Risk per trade (%) ", riskIn)),
+        h("p", { class: "small muted", style: "margin-bottom:0" }, "Each trade plan sizes the position so that hitting the stop-loss costs about this % of your capital, capped at 15% of capital per share and 10% of the share's daily turnover. 1% is a common, cautious choice.")),
+      h("h2", null, "Backup"),
+      h("div", { class: "chips" },
+        h("button", { class: "chip", type: "button", onclick: () => {
+          const blob = new Blob([JSON.stringify({ watch: MY.watch, holdings: MY.holdings, capital: MY.capital, risk: MY.risk }, null, 2)], { type: "application/json" });
+          const a = h("a", { href: URL.createObjectURL(blob), download: `dse-my-stocks-${s.asof}.json` }); document.body.appendChild(a); a.click(); a.remove();
+        } }, "⤓ Export"),
+        h("button", { class: "chip", type: "button", onclick: () => fileIn.click() }, "⤒ Import"), fileIn));
+  }
+
   // ---------- routing
-  const TABS = [["top", "Top picks"], ["all", "All shares"], ["sectors", "Sectors"], ["track", "Track record"], ["how", "How it works"]];
+  const TABS = [["top", "Top picks"], ["mine", "My stocks"], ["all", "All shares"], ["sectors", "Sectors"], ["track", "Track record"], ["how", "How it works"]];
   async function route() {
     const hash = decodeURIComponent(location.hash.slice(1)) || "top";
     const [view, arg] = hash.split("/");
@@ -561,6 +799,7 @@
     try {
       if (view === "s" && arg) node = await viewStock(arg);
       else if (view === "sectors") node = viewSectors();
+      else if (view === "mine") node = viewMine();
       else if (view === "all") node = viewAll();
       else if (view === "track") node = viewTrack();
       else if (view === "how") node = viewHow();
@@ -579,7 +818,9 @@
     if (t === "auto") document.documentElement.removeAttribute("data-theme");
     else document.documentElement.setAttribute("data-theme", t);
     store("theme", t);
-    document.getElementById("theme").textContent = { auto: "Theme: auto", light: "Theme: light", dark: "Theme: dark" }[t];
+    const btn = document.getElementById("theme");
+    btn.textContent = { auto: "◐ Auto", light: "☀ Light", dark: "☾ Dark" }[t];
+    btn.setAttribute("aria-label", `Theme: ${t} (click to change)`);
   }
 
   async function init() {
@@ -604,6 +845,7 @@
       app().textContent = "Could not load the data. Please refresh in a minute (Ctrl+Shift+R); the site may be mid-update.";
       return;
     }
+    navCount();
     window.addEventListener("hashchange", route);
     let rt, lastW = window.innerWidth;
     window.addEventListener("resize", () => {

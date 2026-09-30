@@ -79,14 +79,15 @@ PHASE_TEXT = {
     "Late fall": "a fall that is running longer than usual",
     "Sideways": "no clear swing",
 }
+# Tags. Only clear cases get Buy or Sell; everything else is Neutral.
 # Unseen-data check (Nov 2025 - Sep 2026): among shares expected to rise, those
 # bottoming / late in a fall / early in a rise rose most often (~55%); among shares
 # expected to fall, those still falling or topping rose least often (34-41%).
-STRONG_BUY_PHASES = {"Bottoming", "Late fall", "Early rise"}
-STRONG_SELL_PHASES = {"Early fall", "Mid fall", "Late fall", "Topping"}
-STRONG_BUY_MIN = 0.01        # expected move of at least +1%
-STRONG_SELL_MAX = -0.005     # expected move of -0.5% or worse
-TIER = {"Strong Buy": 3, "Buy": 2, "Sell": 1, "Strong Sell": 0}
+BUY_PHASES = {"Bottoming", "Late fall", "Early rise"}
+SELL_PHASES = {"Early fall", "Mid fall", "Late fall", "Topping"}
+BUY_MIN = 0.01        # expected move of at least +1%
+SELL_MAX = -0.005     # expected move of -0.5% or worse
+TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
 
 
 def phase(leg_dir, progress, ret5):
@@ -102,11 +103,10 @@ def phase(leg_dir, progress, ret5):
 
 
 def journey_verdict(exp, ph):
-    """Direction from the expected move, strength from the journey."""
+    """Buy: expected up enough AND a good-entry journey. Sell: expected down AND still falling/topping."""
     return pd.Series(np.select(
-        [(exp >= STRONG_BUY_MIN) & ph.isin(STRONG_BUY_PHASES), exp > 0,
-         (exp <= STRONG_SELL_MAX) & ph.isin(STRONG_SELL_PHASES)],
-        ["Strong Buy", "Buy", "Strong Sell"], "Sell"), index=exp.index)
+        [(exp >= BUY_MIN) & ph.isin(BUY_PHASES), (exp <= SELL_MAX) & ph.isin(SELL_PHASES)],
+        ["Buy", "Sell"], "Neutral"), index=exp.index)
 
 
 def path_quantiles(fwd_wide, days):

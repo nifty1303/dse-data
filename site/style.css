@@ -11,6 +11,7 @@
   --border: rgba(11, 11, 11, 0.10);
   --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.05);
   /* decision colours: always paired with a text label */
+  --neutral: #8a8984;
   --buy: #0f9d58;
   --buy-strong: #0b7a44;
   --buy-wash: #e3f4ea;
@@ -74,7 +75,7 @@ header.top .wrap { display: flex; align-items: center; gap: 14px; min-height: 58
 .brand span { color: var(--buy); }
 .asof { color: var(--muted); font-size: 12px; }
 nav.tabs { display: flex; gap: 2px; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
-nav.tabs a { padding: 8px 12px; border-radius: 8px; color: var(--ink-2); white-space: nowrap; transition: background .15s; }
+nav.tabs a { padding: 8px 10px; border-radius: 8px; color: var(--ink-2); white-space: nowrap; transition: background .15s; }
 nav.tabs a.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 nav.tabs a:hover { text-decoration: none; background: var(--surface-2); }
 .theme-btn { border: 1px solid var(--border); background: transparent; color: var(--ink-2); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
@@ -261,6 +262,7 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 .empty { color: var(--muted); padding: 10px 0; }
 
 @media (max-width: 640px) {
+  header.top { position: static; }
   nav.tabs { margin-left: 0; width: 100%; }
   h1 { font-size: 21px; }
   .qcard .hz { grid-template-columns: 1fr; gap: 10px; }
@@ -283,3 +285,48 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 .qgrid .pathbox { padding: 4px 6px 0; }
 .v-strong-sell, .v-strong-buy { box-shadow: 0 1px 3px rgba(0,0,0,.15); }
 @media (max-width: 640px) { .qgrid { grid-template-columns: 1fr; } }
+
+/* tags: Buy / Neutral / Sell */
+.v-buy { background: var(--buy-strong); color: #fff; } .v-buy::before { content: "▲"; }
+.v-sell { background: var(--sell-strong); color: #fff; } .v-sell::before { content: "▼"; }
+.v-neutral { background: var(--surface-2); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--axis); } .v-neutral::before { content: "–"; }
+
+/* watch star */
+.star { border: 0; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 6px; }
+.star:hover { background: var(--surface-2); }
+.star.on { color: #e0a100; }
+
+/* plan */
+.plan { background: var(--surface-2); border-radius: 8px; padding: 6px 10px; color: var(--ink-2); }
+.plan.sellplan { background: var(--sell-wash); color: var(--sell-ink); }
+.rr { font-weight: 700; padding: 0 6px; border-radius: 99px; font-size: 11px; }
+.rr-good { background: var(--buy-wash); color: var(--buy-ink); }
+.rr-fair { background: var(--warn-bg); color: var(--warn-ink); }
+.rr-poor { background: var(--sell-wash); color: var(--sell-ink); }
+.plan-card h3 { margin-bottom: 10px; }
+.plan-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.pl { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.pl span { font-size: 12px; color: var(--muted); }
+.pl b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.pl small { font-size: 12px; }
+.sizer { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; }
+.sizer label, .filters input { font-size: 13px; color: var(--ink-2); }
+.sizer input, .filters input { background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; width: 140px; }
+.tagwhy { color: var(--ink); }
+
+/* rule checks */
+.rule { margin: 4px 0; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 2px 0; }
+.check .mark { font-weight: 800; width: 16px; text-align: center; }
+.check.ok .mark { color: var(--buy); }
+.check.no .mark { color: var(--sell); }
+.check.no { color: var(--ink-2); }
+
+/* my stocks */
+.alerts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.alerts li { padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.alerts .al-good { background: var(--buy-wash); color: var(--buy-ink); }
+.alerts .al-bad { background: var(--sell-wash); color: var(--sell-ink); }
+.alerts .al-info { background: var(--surface-2); color: var(--ink-2); }
+td.adv-good { color: var(--buy-ink); } td.adv-bad { color: var(--sell-ink); font-weight: 600; }
+.pick .top .star { margin-left: -4px; }

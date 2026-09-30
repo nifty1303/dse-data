@@ -17,15 +17,16 @@ COST_SIDE = 0.005
 STEP = 5
 
 
-def run(m, panel, ex, oos, key, days, thr):
-    fwd, btype, mk = ex["fwd"][key], ex["btype"], m.index
-    oos_s = M.smooth(oos)
-    dates = sorted(oos_s.index.get_level_values("date").unique())
-    rebal = [d for d in dates[::STEP] if m.dates.get_loc(d) + days < len(m.dates)]
+def rebalance_dates(oos_index, m, days):
+    dates = sorted(oos_index.get_level_values("date").unique())
+    return [d for d in dates[::STEP] if m.dates.get_loc(d) + days < len(m.dates)]
+
+
+def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names):
+    """tables: {date: day table with sector, rank_score, sell_score and calib_col}."""
+    fwd, mk = ex["fwd"][key], m.index
     rows, prev, calib = [], set(), []
-    for d in rebal:
-        prob = oos_s.xs(d, level="date")
-        t = M.day_table(prob, panel.xs(d, level="date"), btype.loc[d], m.info)
+    for d, t in tables.items():
         top, _ = M.top_list(t)
         sells = M.top_list(t, cap=len(t), score="sell_score")[0]
         f = fwd.loc[d]
@@ -41,7 +42,7 @@ def run(m, panel, ex, oos, key, days, thr):
             "target_rate": (f.reindex(top) > thr).mean(), "sell_fell": (f.reindex(sells) < 0).mean(),
             "picks": ",".join(top)})
         prev = set(top)
-        calib.append(t.assign(fwd=f.reindex(t.index)).dropna(subset=["fwd"])[["buy", "sell", "direction", "fwd"]])
+        calib.append(t.assign(fwd=f.reindex(t.index)).dropna(subset=["fwd"])[[calib_col, "fwd"]])
     wk = pd.DataFrame(rows).set_index("date")
     compounding = days == STEP
     if compounding:
@@ -49,13 +50,11 @@ def run(m, panel, ex, oos, key, days, thr):
             wk[f"{c}_curve"] = (1 + wk[c]).cumprod() * 100
 
     cal = pd.concat(calib)
-    edges = [0, .3, .45, .55, .7, 1.0001]
-    names = ["Strong Sell / Sell (<30%)", "Sell side (30-45%)", "Balanced (45-55%)", "Buy side (55-70%)", "Strong Buy / Buy (70%+)"]
-    buckets = pd.cut(cal["direction"], edges, labels=names, right=False)
+    buckets = pd.cut(cal[calib_col], calib_edges, labels=calib_names, right=False)
     table = cal.groupby(buckets, observed=True).agg(
-        predicted=("direction", "mean"), n=("fwd", "size"),
+        predicted=(calib_col, "mean"), n=("fwd", "size"),
         rose=("fwd", lambda s: (s > thr).mean()), fell=("fwd", lambda s: (s < -thr).mean()),
-        avg_return=("fwd", "mean")).reset_index().rename(columns={"direction": "bucket"})
+        avg_return=("fwd", "mean"), median_return=("fwd", "median")).reset_index().rename(columns={calib_col: "bucket"})
     table["realized_split"] = table["rose"] / (table["rose"] + table["fell"]).replace(0, np.nan)
 
     def total(col):

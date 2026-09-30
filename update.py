@@ -1,6 +1,7 @@
 """
 DSE data updater, run by GitHub Actions.
 
+    python update.py today                 # today only (Dhaka date)
     python update.py daily                 # last LOOKBACK_DAYS days (default 5)
     python update.py daily 10              # last 10 days
     python update.py fix 2026-09-29        # replace one day
@@ -117,6 +118,22 @@ def daily(lookback=LOOKBACK_DAYS):
         sys.exit("ERROR: DSE returned no price data for the whole range.")
 
 
+def today():
+    # Early same-day run. DSE may not have published yet, so an empty result is not an
+    # error here; the later "daily" run re-checks the last few days and fails loudly.
+    prices = load_csv(PRICES_CSV, PRICE_COLS)
+    now = datetime.now(ZoneInfo("Asia/Dhaka"))
+    day = now.date().isoformat()
+    new = fetch_prices(day, day)
+    before = len(prices)
+    prices = merge_prices(prices, new)
+    print(f"Dhaka time {now:%Y-%m-%d %H:%M}")
+    if new.empty:
+        print(f"Note: no data for {day} yet (holiday, or not published yet)")
+    else:
+        print(f"OK: {day}: {len(new):,} rows downloaded, {len(prices) - before:,} new")
+
+
 def fix(start, end=None):
     end = end or start
     prices = load_csv(PRICES_CSV, PRICE_COLS)
@@ -188,7 +205,9 @@ def fundamentals():
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
     cmd, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
-    if cmd == "daily":
+    if cmd == "today":
+        today()
+    elif cmd == "daily":
         daily(int(args[0]) if args else LOOKBACK_DAYS)
     elif cmd == "fix" and args:
         fix(*args[:2])

@@ -1,7 +1,7 @@
 // DSE Signals front end: one timeframe, the next 2 weeks (10 trading days).
 // Reads data/summary.json, data/track.json and data/stocks/<SYM>.json.
 (function () {
-  const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 500, side: "buy", sector: "" };
+  const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 125, side: "buy", sector: "", phase: "" };
   const app = () => document.getElementById("app");
   const NON_SHARE = new Set(["Corporate Bond", "Debenture"]);
 
@@ -31,7 +31,9 @@
   const HZ = () => S.summary.horizons.short;
   const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } };
   const load = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
-  const ORDER = ["Strong Buy", "Buy", "Lean Buy", "Sell"];
+  const ORDER = ["Strong Buy", "Buy", "Sell", "Strong Sell"];
+  const PHASE_ICON = { Bottoming: "↺", "Early rise": "↗", "Mid rise": "↗", "Late rise": "⤴", Topping: "↻", "Early fall": "↘", "Mid fall": "↘", "Late fall": "⤵", Sideways: "→" };
+  const upPhase = p => /rise|Bottoming/.test(p);
 
   // ---------- building blocks
   function badge(v) {
@@ -51,13 +53,24 @@
   const moveStat = o => stat("move chance", pct(o.move), o.move, "Chance the price moves more than 3% either way in the next 2 weeks");
   const confStat = o => stat("confidence", o.conf, o.conf / 100, "How far to trust this: history, liquidity, cycle regularity, clarity");
   function expBlock(o) {
-    const parts = [`from the odds ${spct(o.outlook)}`];
-    if (o.tilt) parts.push(`cycle ${spct(o.tilt)}`);
-    if (o.season) parts.push(`month ${spct(o.season)}`);
-    if (o.weekday) parts.push(`weekday ${spct(o.weekday)}`);
+    const cls = o.exp > 0 ? "up" : o.exp < 0 ? "down" : "";
     return h("div", { class: "expbox" },
-      h("div", null, h("b", { class: o.exp >= 0.025 ? "up" : o.exp < 0 ? "down" : "" }, spct(o.exp)), " expected change in 2 weeks"),
-      parts.length > 1 ? h("div", { class: "small muted" }, parts.join(" · ")) : null);
+      h("div", null, h("b", { class: cls }, spct(o.exp)), " expected in 2 weeks",
+        o.target != null ? h("span", { class: "muted" }, ` → Tk ${num(o.target)}`) : null),
+      o.path_lo != null ? h("div", { class: "small muted" }, `Likely range Tk ${num(o.path_lo)} – ${num(o.path_hi)} (its usual 2-week spread)`) : null);
+  }
+  function phaseChip(o) {
+    return h("span", { class: "phase " + (upPhase(o.phase) ? "p-up" : o.phase === "Sideways" ? "" : "p-down"), title: o.journey },
+      h("span", { "aria-hidden": "true" }, PHASE_ICON[o.phase] || "·"), " ", o.phase);
+  }
+  function pathChart(r) {
+    const o = r.s;
+    const color = o.exp >= 0 ? css("--buy") : css("--sell");
+    const last = r.spark[r.spark.length - 1];
+    const pr = o.target != null && last != null ? { steps: 10, from: last, mid: last * (1 + o.exp),
+      lo: last * (o.path_lo / r.close), hi: last * (o.path_hi / r.close), color } : null;
+    return h("div", { class: "pathbox", title: "Last 40 sessions, then the expected path and its likely range for the next 10" },
+      Charts.sparkPath(r.spark, pr));
   }
   function gauge(r) {
     const b = r.band == null ? null : Math.max(-0.2, Math.min(1.2, r.band));
@@ -103,11 +116,11 @@
   }
   function dist() {
     const v = HZ().verdicts, total = ORDER.reduce((a, k) => a + (v[k] || 0), 0);
-    const col = { "Strong Buy": "--buy-strong", Buy: "--buy", "Lean Buy": "--buy-wash", Sell: "--sell" };
+    const col = { "Strong Buy": "--buy-strong", Buy: "--buy", Sell: "--sell", "Strong Sell": "--sell-strong" };
     return h("div", { class: "card", style: "padding:12px 16px;margin-bottom:16px" },
       h("div", { class: "small muted" }, `All ${total} shares today, next 2 weeks`),
       h("div", { class: "dist" }, ORDER.filter(k => v[k]).map(k => h("span", {
-        style: `flex:${v[k]};background:var(${col[k]});color:${k === "Lean Buy" ? "var(--buy-ink)" : "#fff"}`, title: `${k}: ${v[k]}` },
+        style: `flex:${v[k]};background:var(${col[k]});color:#fff`, title: `${k}: ${v[k]}` },
         v[k] / total > 0.06 ? `${k} ${v[k]}` : ""))),
       h("div", { class: "chips small" }, ORDER.filter(k => v[k]).map(k => h("span", null, badge(k), " ", v[k]))));
   }
@@ -119,29 +132,30 @@
       h("div", { class: "top" },
         h("div", { class: "rank" }, pos, move(o)),
         h("div", { class: "name" }, h("div", null, h("span", { class: "sym" }, r.sym), " ", badge(o.verdict)),
-          h("div", { class: "meta" }, `${r.sector} · Category ${r.cat}`), h("div", null, tags(r))),
+          h("div", { class: "meta" }, `${r.sector} · Category ${r.cat}`), h("div", null, phaseChip(o), " ", tags(r))),
         h("div", { class: "price" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)))),
+      pathChart(r),
       expBlock(o),
+      h("div", { class: "journey small" }, o.journey),
       bs(o),
       h("div", { class: "nums" }, moveStat(o), confStat(o),
         stat("to regular high", spct(r.up_room, 0)), stat("to 2-yr low", spct(r.down_risk == null ? null : -r.down_risk, 0))),
-      gauge(r),
       lines.length ? h("ul", { class: "why" }, lines.map(t => h("li", null, t))) : null,
       o.days_top > 1 && side !== "sell" ? h("div", { class: "other" }, `${o.days_top} days in the Top 20`) : null);
   }
   function miniRow(r) {
     const o = r.s;
     return h("div", { class: "mini", onclick: () => go(r.sym) },
-      h("div", null, h("span", { class: "sym" }, r.sym), " ", h("span", { class: "muted small" }, `${num(r.close)} · expected ${spct(o.exp)}`)),
+      h("div", null, h("span", { class: "sym" }, r.sym), " ", h("span", { class: "muted small" }, `${num(r.close)} · ${spct(o.exp)} · ${o.phase}`)),
       badge(o.verdict), bs(o));
   }
 
   // ---------- Top picks
-  function pickList(side, sector) {
+  function pickList(side, sector, phase) {
     const by = side === "sell" ? "sscore" : "score";
-    const pool = S.summary.stocks.filter(r => !NON_SHARE.has(r.sector) && (!sector || r.sector === sector))
+    const pool = S.summary.stocks.filter(r => !NON_SHARE.has(r.sector) && (!sector || r.sector === sector) && (!phase || r.s.phase === phase))
       .sort((a, b) => b.s[by] - a.s[by]);
-    if (sector) return pool.slice(0, 20);
+    if (sector || phase) return pool.slice(0, 20);
     const out = [], count = {};
     for (const r of pool) {                       // at most 4 per sector when showing all sectors
       if (out.length >= 20) break;
@@ -150,16 +164,17 @@
     return out;
   }
   function viewTop() {
-    const s = S.summary, hz = HZ(), side = S.side, sector = S.sector;
-    const list = pickList(side, sector);
+    const s = S.summary, hz = HZ(), side = S.side, sector = S.sector, phase = S.phase || "";
+    const list = pickList(side, sector, phase);
+    const phases = Object.keys(hz.phases || {}).sort((a, b) => hz.phases[b] - hz.phases[a]);
     const sectors = [...new Set(s.stocks.map(r => r.sector))].filter(x => !NON_SHARE.has(x)).sort();
     const sideBtn = (v, label) => h("button", { class: side === v ? "on" : "", onclick: () => { S.side = v; route(); } }, label);
-    const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""} · next 2 weeks`;
+    const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
     const sub = side === "sell"
-      ? "Lowest expected change over the next 10 trading days, including the highest odds of a 3%+ fall. Junk shares can still spike, so the risk runs both ways."
-      : "Highest expected change over the next 10 trading days. Verdict: under +1% Sell, +1% to +2.5% Lean Buy, +2.5% to +4% Buy, +4% or more Strong Buy.";
-    const showExtras = side === "buy" && !sector;
-    const noneBuy = side === "buy" && list.length && list.every(r => r.s.verdict === "Sell");
+      ? "Expected to fall over the next 2 weeks. Strong Sell = expected −0.5% or worse while the share is still falling or topping out."
+      : "Expected to rise over the next 2 weeks. Strong Buy = expected +1% or more while the share is bottoming, late in a fall, or early in a rise.";
+    const showExtras = side === "buy" && !sector && !phase;
+    const wrongSide = list.filter(r => side === "buy" ? r.s.exp <= 0 : r.s.exp > 0).length;
     return h("div", null,
       moodBanner(s.mood),
       h("div", { class: "page-head" },
@@ -167,11 +182,13 @@
       h("div", { class: "filters" },
         h("div", { class: "seg", role: "tablist", "aria-label": "Buy or sell" }, sideBtn("buy", "Buy"), sideBtn("sell", "Sell")),
         h("select", { "aria-label": "Sector", onchange: e => { S.sector = e.target.value; route(); } },
-          h("option", { value: "" }, "All sectors"), sectors.map(x => h("option", { value: x, selected: sector === x ? "" : null }, x)))),
+          h("option", { value: "" }, "All sectors"), sectors.map(x => h("option", { value: x, selected: sector === x ? "" : null }, x))),
+        h("select", { "aria-label": "Journey", onchange: e => { S.phase = e.target.value; route(); } },
+          h("option", { value: "" }, "Any journey"), phases.map(x => h("option", { value: x, selected: phase === x ? "" : null }, `${PHASE_ICON[x] || ""} ${x} (${hz.phases[x]})`)))),
       dist(),
       timingTip(),
-      noneBuy ? h("div", { class: "note", style: "margin-bottom:12px" },
-        "No share in this list reaches the +1% line, so every verdict is Sell. These are still the best-placed shares if you do buy.") : null,
+      wrongSide ? h("div", { class: "note", style: "margin-bottom:12px" },
+        `${wrongSide} share(s) in this list are expected to move the other way; they are the closest available with these filters.`) : null,
       list.length ? h("div", { class: "picks" }, list.map((r, i) => pickCard(r, i + 1, side))) : h("div", { class: "empty" }, "No shares in this sector."),
       showExtras ? h("div", { class: "grid two", style: "margin-top:14px" },
         h("div", { class: "card" }, h("h3", null, "New in the Top 20 today"),
@@ -192,7 +209,7 @@
     return h("div", null,
       moodBanner(S.summary.mood),
       h("h1", null, "By sector"),
-      h("p", { class: "sub" }, "Top 5 to buy and top 5 to sell in every sector for the next 2 weeks. Sectors are ordered by their average expected change."),
+      h("p", { class: "sub" }, "Top 5 to buy and top 5 to sell in every sector for the next 2 weeks. Sectors are ordered by their average expected move."),
       h("div", { class: "grid two" }, secs.map(([name, v]) => h("div", { class: "card" },
         h("h3", { style: "display:flex;justify-content:space-between;gap:8px" }, h("span", null, name),
           h("span", { class: "small muted num" }, `${v.count} listed · avg expected ${spct(v.avg_exp)} · 4 wks ${spct(v.ret20)}`)),
@@ -208,6 +225,8 @@
     ["chg", "Day", r => spct(r.chg), r => r.chg, "r"],
     ["rank", "Verdict", r => badge(r.s.verdict), r => r.s.rank],
     ["exp", "Expected 2 wks", r => spct(r.s.exp), r => r.s.exp, "r"],
+    ["target", "Target", r => num(r.s.target), r => r.s.target, "r"],
+    ["phase", "Journey", r => r.s.phase, r => r.s.phase],
     ["dir", "Buy", r => pct(r.s.dir), r => r.s.dir, "r g"],
     ["sell", "Sell", r => pct(1 - r.s.dir), r => 1 - r.s.dir, "r rd"],
     ["move", "Move chance", r => pct(r.s.move), r => r.s.move, "r"],
@@ -221,9 +240,11 @@
       h("div", { class: "head" }, h("div", null, h("b", { style: "font-size:16px" }, r.sym), " ", badge(o.verdict), " ",
         h("span", { class: "muted small" }, `${r.sector} · Cat ${r.cat}`)),
         h("div", { class: "num" }, h("b", null, num(r.close)), " ", h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)))),
-      bs(o),
-      h("div", { class: "mv" }, h("b", { class: o.exp >= 0.025 ? "up" : o.exp < 0 ? "down" : "" }, `Expected ${spct(o.exp)}`),
-        ` in 2 weeks · Move chance ${pct(o.move)} · Confidence ${o.conf}`));
+      h("div", { class: "qgrid" },
+        h("div", null, bs(o),
+          h("div", { class: "mv" }, h("b", { class: o.exp > 0 ? "up" : o.exp < 0 ? "down" : "" }, `Expected ${spct(o.exp)} → Tk ${num(o.target)}`),
+            ` · ${o.phase} · Confidence ${o.conf}`)),
+        pathChart(r)));
   }
   function viewAll() {
     const s = S.summary, f = S.filters;
@@ -282,7 +303,6 @@
     const t = S.track.short, s = t.summary, x = t.extra;
     const chart = h("div");
     const vsIdx = s.top20_total - s.market_total, vsAll = s.top20_total - s.all_total;
-    const kept = [x.cycle_weight ? `cycle tilt (weight ${x.cycle_weight})` : null, x.use_month ? "month season" : null, x.use_weekday ? "weekday effect" : null].filter(Boolean);
     const out = h("div", null,
       h("h1", null, "Track record"),
       h("p", { class: "sub" }, `Every 2 weeks the Top 20 is bought in equal amounts and held for 10 trading days, paying 0.5% brokerage each way on the part of the list that changes. ` +
@@ -306,26 +326,23 @@
         `${vsAll >= 0 ? "beat" : "trailed"} an equal-weight basket of every share by ${Math.abs(vsAll * 100).toFixed(1)} points. ` +
         `On an average period ${pct(s.avg_hit_rate)} of the picks rose, while ${pct(s.avg_sell_fell)} of the sell list fell. ` +
         "The model is better at spotting shares likely to fall than shares about to rise, so treat the scores as odds, not certainties."),
-      h("h2", null, "Does the expected change come true?"),
-      h("p", { class: "sub" }, "Unseen predictions grouped by expected 2-week change, against what really happened."),
+      h("h2", null, "Does the expected move come true?"),
+      h("p", { class: "sub" }, "Unseen predictions grouped by expected 2-week move, against what really happened."),
       h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Expected change", "Cases", "Avg expected", "Actual avg", "Actual median", "Rose >3%", "Fell >3%"]
+        h("thead", null, h("tr", null, ["Expected move", "Cases", "Avg expected", "Actual avg", "Actual median", "Rose >3%", "Fell >3%"]
           .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
         h("tbody", null, t.calibration.map(c => h("tr", { style: "cursor:default" }, h("td", null, c.bucket), h("td", { class: "r" }, (c.n || 0).toLocaleString()),
           h("td", { class: "r" }, spct(c.predicted)), h("td", { class: "r" }, spct(c.avg_return)), h("td", { class: "r" }, spct(c.median_return)),
           h("td", { class: "r g" }, pct(c.rose)), h("td", { class: "r rd" }, pct(c.fell))))))),
-      h("h2", null, "Which add-ons earned their place?"),
-      h("p", { class: "sub" }, `Each add-on is kept only if it helps on unseen periods. In use now: ${kept.length ? kept.join(", ") : "none — the odds alone did best"}.`),
-      h("div", { class: "grid two" },
-        h("div", { class: "card" }, h("h3", null, "Cycle tilt (2-year range position)"),
-          h("div", { class: "small muted", style: "margin-bottom:6px" }, "Judged on the Top 20's result"),
-          h("div", { class: "kv" }, x.trials.flatMap(tr => [h("div", null, `Weight ${tr.w}${tr.w === x.cycle_weight ? " (used)" : ""}`),
-            h("div", null, `${spct(tr.top20)} · beat index ${pct(tr.beat_market)}`)]))),
-        h("div", { class: "card" }, h("h3", null, "Month season and weekday effect"),
-          h("div", { class: "small muted", style: "margin-bottom:6px" }, "Judged on how close the expected 2-week move of the average share came to reality (lower error is better)"),
-          h("div", { class: "kv" }, Object.entries(x.calendar_trials).flatMap(([k, v]) => [
-            h("div", null, { none: "Neither", month: "Month season", weekday: "Weekday effect", both: "Both" }[k]),
-            h("div", null, `error ${pct(v.rmse, 2)}`)])))),
+      h("h2", null, "Does each verdict come true?"),
+      h("p", { class: "sub" }, "Every unseen day and share, grouped by the verdict it had, against what the price did over the next 2 weeks."),
+      h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Verdict", "Share of cases", "Rose", "Median move", "Average move", "Rose >3%", "Fell >3%"]
+          .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
+        h("tbody", null, x.verdict_check.map(v => h("tr", { style: "cursor:default" }, h("td", null, badge(v.verdict)),
+          h("td", { class: "r" }, pct(v.share)), h("td", { class: "r" }, pct(v.rose)), h("td", { class: "r" }, spct(v.median, 2)),
+          h("td", { class: "r" }, spct(v.avg, 2)), h("td", { class: "r g" }, pct(v.up3)), h("td", { class: "r rd" }, pct(v.down3))))))),
+      h("p", { class: "small muted", style: "margin-top:6px" }, "Many DSE shares don't trade on some days, so the median move is often exactly 0%."),
       h("h2", null, "Calendar patterns in the data"),
       h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h3", null, "2-week return of the average share, by month"),
@@ -362,15 +379,18 @@
       h("h1", null, "How the scores work"),
       p("Everything here comes only from DSE prices, volumes and trades plus the weekly company snapshot. No news, no opinions."),
       h("h2", null, "The question"),
-      p("For every share: over the next 10 trading days (2 DSE weeks), how likely is it to gain more than 3%, or to lose more than 3%? 3% clears roughly 1% of round-trip brokerage with profit left."),
-      h("h2", null, "What each number means"),
+      p("For every share: where is it going over the next 10 trading days (2 DSE weeks), and where is it on its journey right now?"),
+      h("h2", null, "How the verdict is decided"),
       h("ul", null,
-        h("li", null, h("b", null, "Expected change: "), "the chance of a 3%+ rise times the average such rise, plus the chance of a 3%+ fall times the average such fall, plus the rest times the average small move. Add-ons (cycle tilt, month season, weekday effect) are included only when the backtest shows they help."),
-        h("li", null, h("b", null, "Verdict: "), "under +1% expected = Sell (doesn't beat brokerage), +1% to +2.5% = Lean Buy, +2.5% to +4% = Buy, +4% or more = Strong Buy."),
-        h("li", null, h("b", null, "Buy / Sell split (adds to 100%): "), "if the share does move more than 3%, how likely it is to be up (green) versus down (red)."),
-        h("li", null, h("b", null, "Move chance: "), "how likely it is to move more than 3% at all. Low means it will probably just drift."),
-        h("li", null, h("b", null, "Confidence (0–100): "), "how much history the share has, how liquid it is, how regular its cycles are, and how clear-cut today's split is. Junk shares are scaled down by a quarter, dead ones by half."),
-        h("li", null, h("b", null, "Ranking: "), "the Top 20 ranks by expected change, at most 4 per sector when showing all sectors.")),
+        h("li", null, h("b", null, "Expected move: "), "the chance of a 3%+ rise times the average such rise, plus the chance of a 3%+ fall times the average such fall, plus the rest times the average small move. It is also turned into a target price, with a likely range from the share's own usual 2-week spread."),
+        h("li", null, h("b", null, "Direction: "), "expected move above 0 = Buy side; 0 or below = Sell side."),
+        h("li", null, h("b", null, "Journey: "), "where the share is on its current swing, found automatically: Bottoming (a long fall turning up), Early / Mid / Late rise, Topping (a long rise turning down), Early / Mid / Late fall, or Sideways. Late means the swing is already longer than that share's typical swing."),
+        h("li", null, h("b", null, "Strong Buy: "), "expected move +1% or more while the share is bottoming, late in a fall, or early in a rise."),
+        h("li", null, h("b", null, "Strong Sell: "), "expected move −0.5% or worse while the share is falling (early, mid or late) or topping out."),
+        h("li", null, h("b", null, "Why these journeys: "), "on unseen data, shares expected to rise that were bottoming, late in a fall or early in a rise went up most often (about 55%); shares expected to fall that were still falling or topping went up least often (34–41%). The Track record page shows how each verdict turned out."),
+        h("li", null, h("b", null, "Buy / Sell split and move chance: "), "if the share moves more than 3%, how likely up vs down; and how likely it moves that much at all."),
+        h("li", null, h("b", null, "Confidence (0–100): "), "history, liquidity, cycle regularity and how clear-cut the split is. Junk shares are scaled down by a quarter, dead ones by half."),
+        h("li", null, h("b", null, "Ranking: "), "Strong Buys first, then Buys, each ordered by expected move; at most 4 per sector when showing all sectors.")),
       h("h2", null, "Ranges"),
       h("ul", null,
         h("li", null, h("b", null, "Regular range: "), "the 10th to 90th percentile of all closing prices over the last 2 years."),
@@ -380,7 +400,7 @@
       p("Cycle position, trend & momentum (returns, moving averages, RSI), money flow (volume vs normal, up-day vs down-day volume, trade size), liquidity, risk (volatility, circuit hits, drawdown), relative strength vs market and sector, fundamentals (category, holdings, reserves), junk pattern (volume spikes, circuit runs, pumps, small paid-up capital) and similar past setups in the same share."),
       p("Market mood is shown as a banner but is not fed to the model: with two years of history the model would learn what the market happened to do rather than which shares beat others."),
       h("h2", null, "Calendar effects"),
-      p("Month-of-year and weekday effects (including Thursday, the last session before DSE's weekend) are measured and tested. They are added to the expected change only if they make it more accurate on unseen periods; the Track record page shows the result. Right now the Sunday dip after the weekend shows up as a timing tip rather than a change to the verdicts."),
+      p("Month-of-year effects, weekday effects (including Thursday, the last session before DSE's weekend) and a 2-year-cycle tilt were all tested as add-ons to the expected move. None made it more accurate on unseen periods, so they are shown for reference on the Track record page. The Sunday dip after the weekend appears as a timing tip."),
       h("h2", null, "How it stays honest"),
       p("A gradient-boosted decision-tree model is retrained monthly in the backtest using only data available at the time. Its odds are calibrated to match how often things actually happened over the full two years."),
       h("h2", null, "Bonus shares"),
@@ -419,13 +439,15 @@
         h("div", { style: "text-align:right" }, h("div", { class: "price num" }, num(d.close)), h("div", { class: d.chg >= 0 ? "up" : "down" }, spct(d.chg) + " today"))),
       h("div", { class: "grid two" },
         h("div", { class: "card decision" },
-          h("div", { class: "dh" }, h("div", null, h("h3", null, "Next 2 weeks"), h("div", { class: "small muted" }, "10 trading days · target ±3%")), badge(o.verdict)),
-          expBlock(o), bs(o, true),
+          h("div", { class: "dh" }, h("div", null, h("h3", null, "Next 2 weeks"), h("div", { class: "small muted" }, "10 trading days")), badge(o.verdict)),
+          expBlock(o),
+          h("div", null, phaseChip(o)), h("div", { class: "journey" }, o.journey),
+          bs(o, true),
           h("div", { style: "display:flex;gap:22px;flex-wrap:wrap" }, moveStat(o), confStat(o), stat("rank", `${o.rank} / ${S.summary.universe}`))),
         h("div", { class: "card decision" },
           o.why.length ? [h("h4", null, "Reasons to buy"), h("ul", { class: "why" }, o.why.map(x => h("li", null, x)))] : h("h4", null, "No strong reasons to buy"),
           o.caution.length ? [h("h4", null, "Reasons for caution"), h("ul", { class: "caution" }, o.caution.map(x => h("li", null, x)))] : null)),
-      h("h2", null, "Price, regular range and swings"),
+      h("h2", null, "The journey so far, and the expected path"),
       rangeBtns,
       h("div", { class: "legend" },
         h("span", null, h("i", { style: `background:${css("--ink")}` }), "Close (adjusted for bonus shares)"),
@@ -433,7 +455,8 @@
         h("span", null, h("i", { class: "area", style: `background:${css("--s2")};opacity:.22` }), "Current swing (3 months)"),
         h("span", null, h("i", { style: `background:${css("--muted")}` }), "Outlier low / high (2 yrs)"),
         h("span", null, h("i", { class: "dot", style: `background:${css("--buy")}` }), "Swing low"),
-        h("span", null, h("i", { class: "dot", style: `background:${css("--sell")}` }), "Swing high")),
+        h("span", null, h("i", { class: "dot", style: `background:${css("--sell")}` }), "Swing high"),
+        h("span", null, h("i", { class: "area", style: `background:${o.exp >= 0 ? css("--buy") : css("--sell")};opacity:.3` }), "Expected path & likely range (next 2 weeks)")),
       h("div", { class: "card" }, priceBox, h("div", { class: "small muted", style: "margin-top:10px" }, "Volume (green = up day, red = down day)"), volBox),
       h("div", { class: "grid two", style: "margin-top:12px" },
         h("div", { class: "card" }, h("h3", null, "The cycle"), kv([
@@ -449,8 +472,13 @@
           ["Completed swings / regularity", `${m.n_legs ?? "–"} / ${m.regularity != null ? pct(m.regularity) : "–"}`],
         ])),
         h("div", { class: "card" }, h("h3", null, "How the outlook changed"),
-          h("div", { class: "small muted", style: "margin-bottom:4px" }, "Expected 2-week change over the last 3 months"),
-          histBox)),
+          h("div", { class: "small muted", style: "margin-bottom:4px" }, "Expected 2-week move over the last 3 months (above 0 = Buy side)"),
+          histBox,
+          h("div", { class: "chips small", style: "margin-top:6px" }, (() => {
+            const hv = d.history.short, out = [];
+            for (let i = 0; i < hv.dates.length; i++) if (!i || hv.verdict[i] !== hv.verdict[i - 1]) out.push([hv.dates[i], hv.verdict[i]]);
+            return out.slice(-4).map(([dt, v]) => h("span", null, Charts.fmtDate(dt), " ", badge(v)));
+          })()))),
       h("div", { class: "grid two", style: "margin-top:12px" },
         h("div", { class: "card" }, h("h3", null, "What moved the score"),
           h("div", { class: "small muted", style: "margin-bottom:6px" }, "Points each angle adds towards Buy (green) or Sell (red)"),
@@ -504,6 +532,9 @@
           { name: "Close", values: cut(s.close), color: css("--ink"), width: 2, endLabel: false },
         ],
         markers,
+        projection: o.target != null ? { steps: 10, from: s.close[n - 1], mid: s.close[n - 1] * (1 + o.exp),
+          lo: s.close[n - 1] * (o.path_lo / d.close), hi: s.close[n - 1] * (o.path_hi / d.close),
+          color: o.exp >= 0 ? css("--buy") : css("--sell"), label: "in 2 weeks", text: `Tk ${num(o.target)}` } : null,
       });
       const cl = s.close;
       Charts.columns(volBox, {

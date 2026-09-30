@@ -52,7 +52,8 @@
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.label || "chart" });
     box.prepend(svg);
     const n = opts.dates.length;
-    const x = i => m.l + (n <= 1 ? 0 : (i / (n - 1)) * (W - m.l - m.r));
+    const total = n + (opts.extra || 0);          // room on the right for a projected path
+    const x = i => m.l + (total <= 1 ? 0 : (i / (total - 1)) * (W - m.l - m.r));
     const y = v => m.t + (1 - (v - opts.ymin) / (opts.ymax - opts.ymin || 1)) * (H - m.t - m.b);
     const g = el("g", {}); svg.appendChild(g);
     for (const t of niceTicks(opts.ymin, opts.ymax, opts.ticks || 4)) {
@@ -67,7 +68,11 @@
         "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
       tx.textContent = fmtDate(opts.dates[i]); g.appendChild(tx);
     }
-    return { svg, W, H, m, x, y, n };
+    if (opts.extra) {
+      const tx = el("text", { x: x(total - 1), y: H - 6, fill: css("--muted"), "font-size": 11, "text-anchor": "end" });
+      tx.textContent = opts.extraLabel || "ahead"; g.appendChild(tx);
+    }
+    return { svg, W, H, m, x, y, n, total };
   }
 
   function crosshair(box, f, dates, rowsAt) {
@@ -79,7 +84,7 @@
     function show(ev) {
       const r = f.svg.getBoundingClientRect();
       const px = (ev.clientX - r.left) * (f.W / r.width);
-      const i = Math.max(0, Math.min(f.n - 1, Math.round(((px - f.m.l) / (f.W - f.m.l - f.m.r)) * (f.n - 1))));
+      const i = Math.max(0, Math.min(f.n - 1, Math.round(((px - f.m.l) / (f.W - f.m.l - f.m.r)) * ((f.total || f.n) - 1))));
       line.setAttribute("x1", f.x(i)); line.setAttribute("x2", f.x(i)); line.setAttribute("visibility", "visible");
       fillTip(tt, dates[i], rowsAt(i));
       tt.style.display = "block";
@@ -106,10 +111,12 @@
     opts.series.forEach(s => s.values.forEach(v => v != null && isFinite(v) && all.push(v)));
     const bands = opts.bands || (opts.band ? [opts.band] : []);
     bands.forEach(b => [b.lo, b.hi].forEach(a => a.forEach(v => v != null && all.push(v))));
+    const pr = opts.projection;
+    if (pr) [pr.lo, pr.hi, pr.mid].forEach(v => v != null && all.push(v));
     let ymin = Math.min(...all), ymax = Math.max(...all);
     const pad = (ymax - ymin) * 0.06 || 1; ymin -= pad; ymax += pad;
     if (opts.zero) ymin = Math.min(ymin, 0);
-    const f = frame(box, { ...opts, ymin, ymax });
+    const f = frame(box, { ...opts, ymin, ymax, extra: pr ? pr.steps : 0, extraLabel: pr && pr.label });
     for (const band of bands) {
       const { lo, hi } = band;
       let d = "";
@@ -126,6 +133,7 @@
     for (const mk of opts.markers || []) {
       f.svg.appendChild(el("circle", { cx: f.x(mk.i), cy: f.y(mk.v), r: 4, fill: mk.color, stroke: css("--surface"), "stroke-width": 2 }));
     }
+    if (pr) projectionMarks(f.svg, f.x, f.y, f.n - 1, pr, true);
     if (opts.endLabels) {
       const used = [];
       for (const s of opts.series.filter(s => s.endLabel !== false)) {
@@ -180,6 +188,33 @@
     return f;
   }
 
+  // Cone from the last price to the likely range `steps` ahead, with a dashed line to the expected price.
+  function projectionMarks(svg, x, y, i0, pr, labelled) {
+    const x0 = x(i0), x1 = x(i0 + pr.steps), y0 = y(pr.from);
+    svg.appendChild(el("path", { d: `M${x0},${y0}L${x1},${y(pr.hi)}L${x1},${y(pr.lo)}Z`, fill: pr.color, opacity: 0.16 }));
+    svg.appendChild(el("path", { d: `M${x0},${y0}L${x1},${y(pr.mid)}`, stroke: pr.color, "stroke-width": 2, "stroke-dasharray": "4 3", fill: "none" }));
+    svg.appendChild(el("circle", { cx: x1, cy: y(pr.mid), r: labelled ? 4 : 2.5, fill: pr.color, stroke: css("--surface"), "stroke-width": labelled ? 2 : 1 }));
+    if (labelled && pr.text) {
+      const t = el("text", { x: x1 - 6, y: y(pr.mid) - 8, "font-size": 11, "font-weight": 700, fill: css("--ink"), "text-anchor": "end" });
+      t.textContent = pr.text; svg.appendChild(t);
+    }
+  }
+
+  // Small price line with an optional projected cone (pr: {steps, from, mid, lo, hi, color}).
+  function sparkPath(values, pr, w = 260, h = 64) {
+    const v = values.filter(x => x != null);
+    const svg = el("svg", { width: "100%", height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+    if (v.length < 2) return svg;
+    const all = v.concat(pr ? [pr.lo, pr.hi, pr.mid] : []);
+    const lo = Math.min(...all), hi = Math.max(...all);
+    const total = values.length + (pr ? pr.steps : 0);
+    const x = i => 2 + (i / (total - 1)) * (w - 8);
+    const y = val => 4 + (1 - (val - lo) / (hi - lo || 1)) * (h - 8);
+    svg.appendChild(el("path", { d: path(values, x, y), fill: "none", stroke: css("--ink-2"), "stroke-width": 1.6, "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" }));
+    if (pr) projectionMarks(svg, x, y, values.length - 1, pr, false);
+    return svg;
+  }
+
   function spark(values, w = 90, h = 26) {
     const v = values.filter(x => x != null);
     const svg = el("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
@@ -194,5 +229,5 @@
     return svg;
   }
 
-  window.Charts = { line, columns, stack, spark, fmtDate };
+  window.Charts = { line, columns, stack, spark, sparkPath, fmtDate };
 })();

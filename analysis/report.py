@@ -201,6 +201,68 @@ def journey(p, ph):
     return s
 
 
+def tag_reason(exp, ph):
+    """Rule checks behind the tag, and one plain sentence saying why."""
+    from .expected import BUY_MIN, BUY_PHASES, SELL_MAX, SELL_PHASES
+    good, bad = ", ".join(sorted(BUY_PHASES)), ", ".join(sorted(SELL_PHASES))
+    buy = [{"ok": bool(exp >= BUY_MIN), "text": f"Expected 2-week move {exp:+.1%} is at least {BUY_MIN:+.1%}"},
+           {"ok": ph in BUY_PHASES, "text": f"Journey '{ph}' is a good entry point ({good})"}]
+    sell = [{"ok": bool(exp <= SELL_MAX), "text": f"Expected 2-week move {exp:+.1%} is {SELL_MAX:+.1%} or worse"},
+            {"ok": ph in SELL_PHASES, "text": f"Journey '{ph}' is still falling or topping ({bad})"}]
+    if all(c["ok"] for c in buy):
+        why = (f"Buy because both conditions hold: it is expected to rise {exp:+.1%} over the next 2 weeks "
+               f"(the bar is {BUY_MIN:+.0%}), and it is in '{ph}', one of the journeys after which rises have followed most often.")
+    elif all(c["ok"] for c in sell):
+        why = (f"Sell because both conditions hold: it is expected to move {exp:+.1%} over the next 2 weeks "
+               f"(the bar is {SELL_MAX:+.1%}), and it is in '{ph}', a journey after which falls have tended to continue.")
+    else:
+        miss = []
+        if exp > 0:
+            miss.append(f"it is expected to rise only {exp:+.1%} (a Buy needs {BUY_MIN:+.0%})" if exp < BUY_MIN
+                        else f"it is expected to rise {exp:+.1%}, but '{ph}' is not a good entry point for a Buy")
+        else:
+            miss.append(f"it is expected to move {exp:+.1%}, not as weak as the {SELL_MAX:+.1%} a Sell needs" if exp > SELL_MAX
+                        else f"it is expected to move {exp:+.1%}, but '{ph}' is not a falling or topping journey")
+        why = "Neutral because it doesn't clearly qualify either way: " + miss[0] + "."
+    return buy, sell, why
+
+
+def trade_plan(p, price, exp, path_hi, pivots, dates, verdict, liq, recent_closes):
+    """
+    Entry zone, stop-loss, take-profit and reward-to-risk from the share's own swings and volatility.
+    Stop: the nearest recent support 2-12% below the price (last swing low from the last ~3 months,
+    else the lowest close of the last 20 sessions); if neither fits, 1.2x its usual 2-week swing.
+    """
+    sd = float(np.clip(p["vol20"] if not pd.isna(p["vol20"]) else 0.02, 0.005, 0.08))
+    s10 = sd * math.sqrt(10)
+    n = len(dates)
+    supports = []
+    lows = [(i, pr) for i, pr, k in pivots if k == -1 and i >= n - 60]
+    if lows:
+        i, low = lows[-1]
+        supports.append((low, f"just below the last swing low (Tk {low:,.2f} on {dates[i]})"))
+    rc = [x for x in recent_closes if x == x]
+    if rc:
+        supports.append((min(rc), f"just below the lowest close of the last 20 sessions (Tk {min(rc):,.2f})"))
+    stop, basis = None, None
+    for level, text in supports:
+        if 0.02 <= (price - level) / price <= 0.12:
+            stop, basis = level * 0.99, text
+            break
+    if stop is None:
+        dist = float(np.clip(1.2 * s10, 0.03, 0.10))
+        stop = price * (1 - dist)
+        basis = f"{dist:.1%} below today's price (1.2x its usual 2-week swing)"
+    entry_hi = price * (1 + min(0.5 * sd, 0.01))
+    entry_lo = max(stop * 1.02, price * (1 - sd))
+    tp = path_hi if path_hi and path_hi > price * 1.01 else price * (1 + max(exp, 0.02))
+    rr = (tp - price) / max(price - stop, 1e-9)
+    return {"entry_lo": _r(entry_lo, 2), "entry_hi": _r(entry_hi, 2), "stop": _r(stop, 2), "stop_basis": basis,
+            "take_profit": _r(tp, 2), "rr": _r(rr, 2), "risk_pct": _r((price - stop) / price, 4),
+            "reward_pct": _r((tp - price) / price, 4), "liq": _r(liq, 2),
+            "rr_label": "Good" if rr >= 1.5 else "Fair" if rr >= 1.0 else "Poor", "hold_days": 10}
+
+
 def reasons(p, contrib_row, ctx, key, n=3):
     """
     Reasons to buy: angles that lift the score AND whose facts read as good news.
@@ -254,6 +316,19 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         t, yday = per[key]["t"], per[key]["tables"][recent[-2]]
         r = t.loc[sym]
         why, caution = reasons(pt.loc[sym], per[key]["contrib"].loc[sym], ctx(sym), key)
+        rule_buy, rule_sell, tag_why = tag_reason(float(r["exp"]), r["phase"])
+        since, n_days = today, 0
+        for d in reversed(recent):
+            tb = per[key]["tables"][d]
+            if sym in tb.index and tb.at[sym, "verdict"] == r["verdict"]:
+                since, n_days = d, n_days + 1
+            else:
+                break
+        p_hi = close_raw[sym] * (1 + r["path_hi"]) if "path_hi" in t else None
+        liq = math.expm1(pt.at[sym, "liq_value"]) if not pd.isna(pt.at[sym, "liq_value"]) else 0.0
+        plan = trade_plan(pt.loc[sym], float(close_raw[sym]), float(r["exp"]), p_hi, ex["pivots"][sym],
+                          [str(x) for x in dates], r["verdict"], liq,
+                          list(m.close[sym].iloc[-20:].values))
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
                 "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
                 "phase": r["phase"], "journey": journey(pt.loc[sym], r["phase"]),
@@ -264,7 +339,9 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
                 "score": _r(r["rank_score"], 5), "sscore": _r(r["sell_score"], 5),
                 "rank": int(r["rank"]), "srank": int(per[key]["srank"][sym]),
                 "rank_prev": int(yday.at[sym, "rank"]) if sym in yday.index else None,
-                "days_top": days_in_top(key, sym), "why": why, "caution": caution}
+                "days_top": days_in_top(key, sym), "why": why, "caution": caution,
+                "tag_why": tag_why, "rule_buy": rule_buy, "rule_sell": rule_sell,
+                "tag_since": str(since), "tag_days": n_days, "plan": plan}
 
     stocks = []
     for sym in per["short"]["t"].index:

@@ -7,9 +7,8 @@ Score every DSE share for the next 2 weeks (10 trading days) and build the websi
 For each share:
 - expected 2-week move, from calibrated odds of a >3% rise vs a >3% fall
 - journey: where it is on its current swing (bottoming, early rise, ... late fall)
-- verdict: expected move up = Buy, down = Sell; Strong when the journey agrees
-  (Strong Buy: +1% or more and bottoming / late fall / early rise;
-   Strong Sell: -0.5% or worse and falling / topping)
+- tag: Buy = expected +1% or more while bottoming / late in a fall / early in a rise;
+  Sell = expected -0.5% or worse while falling / topping; everything else Neutral
 - projected path: expected price in 2 weeks with the share's usual spread around it
 
 Everything is checked walk-forward on periods the model never saw, and today's
@@ -45,9 +44,9 @@ def build_table(t, panel_day, avg):
     t["phase"] = E.phase(p["leg_dir"], p["leg_progress"], p["ret5"])
     t["verdict"] = E.journey_verdict(t["exp"], t["phase"])
     t["tier"] = t["verdict"].map(E.TIER)
-    # Strong Buys first, then Buys, each ordered by expected move (sells mirror this).
+    # Buys first, then Neutral, each ordered by expected move (sells mirror this).
     t["rank_score"] = t["tier"] + t["exp"].clip(-0.5, 0.5) + 1e-6 * t["conf"]
-    t["sell_score"] = (3 - t["tier"]) - t["exp"].clip(-0.5, 0.5) + 1e-6 * t["conf"]
+    t["sell_score"] = (2 - t["tier"]) - t["exp"].clip(-0.5, 0.5) + 1e-6 * t["conf"]
     t["rank"] = t["rank_score"].rank(ascending=False, method="first").astype(int)
     return t
 
@@ -60,7 +59,7 @@ def verdict_check(sc, panel, fwd, avg, universe):
     d = pd.DataFrame({"v": E.journey_verdict(exp, ph), "f": fwd.reindex(exp.index)}).dropna()
     d = d[d.index.get_level_values("symbol").isin(universe)]
     rows = []
-    for v in ["Strong Buy", "Buy", "Sell", "Strong Sell"]:
+    for v in ["Buy", "Neutral", "Sell"]:
         f = d.loc[d["v"] == v, "f"]
         rows.append({"verdict": v, "n": int(len(f)), "share": float(len(f) / len(d)),
                      "rose": float((f > 0).mean()), "median": float(f.median()),
@@ -128,8 +127,8 @@ def main():
     cal_live = E.calendar_tables(mk, days)
     extra = {
         "outcomes": avg, "verdict_check": vcheck,
-        "rules": {"strong_buy_min": E.STRONG_BUY_MIN, "strong_sell_max": E.STRONG_SELL_MAX,
-                  "strong_buy_phases": sorted(E.STRONG_BUY_PHASES), "strong_sell_phases": sorted(E.STRONG_SELL_PHASES)},
+        "rules": {"buy_min": E.BUY_MIN, "sell_max": E.SELL_MAX,
+                  "buy_phases": sorted(E.BUY_PHASES), "sell_phases": sorted(E.SELL_PHASES)},
         "phase_text": E.PHASE_TEXT,
         "base": cal_live["base"], "month_raw": cal_live["month_raw"], "weekday_raw": cal_live["weekday_raw"],
         "thursday": E.thursday_stats(m.close, equities, m.dates),

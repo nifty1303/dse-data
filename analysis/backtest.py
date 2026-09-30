@@ -2,10 +2,9 @@
 Honest track record per timeframe: the model is retrained every month on data known
 at the time and never sees the periods it is judged on.
 
-Every 5 trading days the Top 20 is "bought" in equal amounts and held for the
-timeframe (5 days short, 40 days long), paying COST_SIDE each way.
-Short term: weeks don't overlap, so results compound into a growth curve.
-Long term: 2-month holds overlap, so each weekly pick is reported on its own.
+Every holding period (10 trading days) the Top 20 is "bought" in equal amounts and
+held to the end, paying COST_SIDE each way on the part of the list that changes.
+Periods follow each other without overlap, so results compound into a growth curve.
 """
 
 import numpy as np
@@ -14,12 +13,11 @@ import pandas as pd
 from . import model as M
 
 COST_SIDE = 0.005
-STEP = 5
 
 
 def rebalance_dates(oos_index, m, days):
     dates = sorted(oos_index.get_level_values("date").unique())
-    return [d for d in dates[::STEP] if m.dates.get_loc(d) + days < len(m.dates)]
+    return [d for d in dates[::days] if m.dates.get_loc(d) + days < len(m.dates)]
 
 
 def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names):
@@ -30,8 +28,8 @@ def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names):
         top, _ = M.top_list(t)
         sells = M.top_list(t, cap=len(t), score="sell_score")[0]
         f = fwd.loc[d]
-        # Short weeks chain into each other, so only replaced names pay costs.
-        turnover = 1.0 if (not prev or days != STEP) else len(set(top) - prev) / len(top)
+        # Periods chain into each other, so only replaced names pay costs.
+        turnover = 1.0 if not prev else len(set(top) - prev) / len(top)
         cost = 2 * COST_SIDE * turnover
         i = m.dates.get_loc(d)
         rows.append({
@@ -44,7 +42,7 @@ def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names):
         prev = set(top)
         calib.append(t.assign(fwd=f.reindex(t.index)).dropna(subset=["fwd"])[[calib_col, "fwd"]])
     wk = pd.DataFrame(rows).set_index("date")
-    compounding = days == STEP
+    compounding = True
     if compounding:
         for c in ["top20", "market", "all_stocks", "sell20"]:
             wk[f"{c}_curve"] = (1 + wk[c]).cumprod() * 100

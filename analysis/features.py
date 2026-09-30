@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 
 HORIZON = 5        # one trading week: sets the swing-detection threshold
-# The two timeframes scored: trading days ahead and the move that counts as Buy / Sell.
+# The timeframe scored: trading days ahead and the move that counts as Buy / Sell.
+# 10 trading days = 2 DSE weeks (Sun-Thu); 3% clears ~1% round-trip brokerage with profit left.
 HORIZONS = {
-    "short": {"days": 5, "thr": 0.02, "label": "1 week", "after": "week", "long_label": "next 7 days"},
-    "long": {"days": 40, "thr": 0.10, "label": "2 months", "after": "2 months", "long_label": "next 60 days"},
+    "short": {"days": 10, "thr": 0.03, "label": "2 weeks", "after": "2 weeks", "long_label": "next 10 trading days"},
 }
 RANGE_DAYS = 500   # "regular range" = up to 2 years of history (all we have for now)
 ANALOG_K = 7
@@ -372,7 +372,7 @@ ANGLES = {
     "Junk pattern": ["junk_score", "spikes250", "pump250", "stage_accumulation", "stage_markup",
                      "stage_distribution", "stage_dump", "type_junk", "type_dead", "type_cycler",
                      "type_trender", "junk_x_markup", "junk_x_dist"],
-    "Similar setups": ["analog_ret_short", "analog_win_short", "analog_ret_long", "analog_win_long"],
+    "Similar setups": ["analog_ret_short", "analog_win_short"],
 }
 FEATURES = [f for fs in ANGLES.values() for f in fs]
 # Market mood is the same for every share and, with only ~2 years (one or two market

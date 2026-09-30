@@ -9,7 +9,13 @@ Features are grouped into the angles shown on the site (ANGLES).
 import numpy as np
 import pandas as pd
 
-HORIZON = 5        # trading days held (one week)
+HORIZON = 5        # one trading week: sets the swing-detection threshold
+# The two timeframes scored: trading days ahead and the move that counts as Buy / Sell.
+HORIZONS = {
+    "short": {"days": 5, "thr": 0.02, "label": "1 week", "after": "week", "long_label": "next 7 days"},
+    "long": {"days": 40, "thr": 0.10, "label": "2 months", "after": "2 months", "long_label": "next 60 days"},
+}
+RANGE_DAYS = 500   # "regular range" = up to 2 years of history (all we have for now)
 ANALOG_K = 7
 
 
@@ -98,13 +104,18 @@ def build(m):
     W = {}
 
     # ---- A. cycle position
+    # Regular range: 10th-90th percentile of up to 2 years (everything known on that day).
+    # Outliers: the true lowest / highest close in that same window.
+    # Current swing: the same percentiles over the last 60 days only.
+    p10_all, p90_all = _q(c, RANGE_DAYS, 0.10, 120), _q(c, RANGE_DAYS, 0.90, 120)
+    min_all = c.rolling(RANGE_DAYS, min_periods=120).min()
+    max_all = c.rolling(RANGE_DAYS, min_periods=120).max()
     p10_60, p90_60 = _q(c, 60, 0.10, 40), _q(c, 60, 0.90, 40)
-    p10_120, p90_120 = _q(c, 120, 0.10, 80), _q(c, 120, 0.90, 80)
-    min120, max120 = c.rolling(120, min_periods=40).min(), c.rolling(120, min_periods=40).max()
+    max120 = c.rolling(120, min_periods=40).max()
+    W["band_all"] = ((c - p10_all) / (p90_all - p10_all).replace(0, np.nan)).clip(-1, 2)
     W["band60"] = ((c - p10_60) / (p90_60 - p10_60).replace(0, np.nan)).clip(-1, 2)
-    W["band120"] = ((c - p10_120) / (p90_120 - p10_120).replace(0, np.nan)).clip(-1, 2)
-    up_room = (p90_120 / c - 1).clip(-0.5, 1)
-    down_risk = (1 - min120 / c).clip(0, 1)
+    up_room = (p90_all / c - 1).clip(-0.5, 2)
+    down_risk = (1 - min_all / c).clip(0, 1)
     W["up_room"], W["down_risk"] = up_room, down_risk
     W["reward_risk"] = np.log((up_room.clip(lower=0) + 0.02) / (down_risk + 0.02)).clip(-3, 3)
 
@@ -223,14 +234,16 @@ def build(m):
         W[f"stage_{k}"] = (stage == k).astype(float)
     for k in ["cycler", "trender", "junk", "dead"]:
         W[f"type_{k}"] = (btype == k).astype(float)
-    W["cyc_x_band"] = W["type_cycler"] * (0.5 - W["band60"].fillna(0.5))
+    W["cyc_x_band"] = W["type_cycler"] * (0.5 - W["band_all"].fillna(0.5))
     W["junk_x_markup"] = W["type_junk"] * W["stage_markup"]
     W["junk_x_dist"] = W["type_junk"] * W["stage_distribution"]
 
-    # ---- I. similar past setups
-    fwd = c.shift(-HORIZON) / c - 1
-    an_ret, an_win, analogs = analog_features(W, fwd)
-    W["analog_ret"], W["analog_win"] = an_ret, an_win
+    # ---- I. similar past setups, for each timeframe
+    fwd, analogs = {}, {}
+    for key, hz in HORIZONS.items():
+        fwd[key] = c.shift(-hz["days"]) / c - 1
+        a_ret, a_win, analogs[key] = analog_features(W, fwd[key], hz["days"])
+        W[f"analog_ret_{key}"], W[f"analog_win_{key}"] = a_ret, a_win
 
     history_days = c.notna().cumsum()
     W["history_days"] = history_days
@@ -239,7 +252,7 @@ def build(m):
     panel.index.names = ["date", "symbol"]
     extras = {"pivots": pivots, "btype": btype, "stage": stage, "market": market,
               "fwd": fwd, "analogs": analogs, "bands": {"p10_60": p10_60, "p90_60": p90_60,
-              "p10_120": p10_120, "p90_120": p90_120, "min120": min120, "max120": max120},
+              "p10_all": p10_all, "p90_all": p90_all, "min_all": min_all, "max_all": max_all},
               "wide": W}
     return panel, extras
 
@@ -309,11 +322,11 @@ def junk_stage(W, c, v, med_v120):
     return s.mask(accum, "accumulation").mask(markup, "markup").mask(distrib, "distribution").mask(dump, "dump")
 
 
-ANALOG_KEYS = ["band60", "leg_dir", "leg_progress", "ret5", "ret20", "vol_ratio5", "updown_vol", "rsi"]
+ANALOG_KEYS = ["band_all", "band60", "leg_dir", "leg_progress", "ret5", "ret20", "vol_ratio5", "updown_vol", "rsi"]
 ANALOG_SCALE = {"ret5": 10, "ret20": 5, "rsi": 1 / 25, "leg_progress": 0.5}
 
 
-def analog_features(W, fwd):
+def analog_features(W, fwd, horizon):
     """For each stock and day: outcome of the K most similar earlier days of the same stock."""
     idx, cols = fwd.index, fwd.columns
     a_ret = pd.DataFrame(np.nan, index=idx, columns=cols)
@@ -327,7 +340,7 @@ def analog_features(W, fwd):
         T = len(idx)
         D = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
         tt, ss = np.meshgrid(np.arange(T), np.arange(T), indexing="ij")
-        valid = (ss <= tt - HORIZON) & ok[None, :] & ok[:, None] & ~np.isnan(f)[None, :]
+        valid = (ss <= tt - horizon) & ok[None, :] & ok[:, None] & ~np.isnan(f)[None, :]
         D = np.where(valid, D, np.inf)
         r_arr, w_arr = np.full(T, np.nan), np.full(T, np.nan)
         for t in range(T):
@@ -340,12 +353,12 @@ def analog_features(W, fwd):
                 nn = nn[np.argsort(D[t][nn])]
                 latest[s] = [(str(idx[i]), float(f[i])) for i in nn]
         a_ret[s], a_win[s] = r_arr, w_arr
-    return a_ret.clip(-0.3, 0.3), a_win, latest
+    return a_ret.clip(-0.6, 0.6), a_win, latest
 
 
 # ------------------------------------------------------------ feature list
 ANGLES = {
-    "Cycle position": ["band60", "band120", "reward_risk", "leg_dir", "leg_progress", "leg_done",
+    "Cycle position": ["band_all", "band60", "reward_risk", "leg_dir", "leg_progress", "leg_done",
                        "up_leg_young", "down_leg_old", "cyc_x_band"],
     "Trend & momentum": ["ret5", "ret10", "ret20", "ret60", "dist_ma20", "dist_ma50", "ma20_slope",
                          "rsi", "higher_low"],
@@ -359,8 +372,13 @@ ANGLES = {
     "Junk pattern": ["junk_score", "spikes250", "pump250", "stage_accumulation", "stage_markup",
                      "stage_distribution", "stage_dump", "type_junk", "type_dead", "type_cycler",
                      "type_trender", "junk_x_markup", "junk_x_dist"],
-    "Similar setups": ["analog_ret", "analog_win"],
+    "Similar setups": ["analog_ret_short", "analog_win_short", "analog_ret_long", "analog_win_long"],
 }
 FEATURES = [f for fs in ANGLES.values() for f in fs]
+# Market mood is the same for every share and, with only ~2 years (one or two market
+# regimes), a model that uses it learns "what the market did then" instead of which
+# shares beat others. Backtests improved without it, so it drives the warning banner only.
+MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
+MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
 INFO_COLS = ["up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

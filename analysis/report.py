@@ -14,7 +14,6 @@ TYPE_LABEL = {"cycler": "Steady cycler", "trender": "Trender", "junk": "Operator
               "dead": "Dead / illiquid", "mixed": "Mixed", "new": "New listing"}
 STAGE_LABEL = {"quiet": "Quiet", "accumulation": "Accumulation", "markup": "Markup",
                "distribution": "Distribution", "dump": "Dump"}
-SHORT = {"short": "s", "long": "l"}
 
 
 def _r(x, n=4):
@@ -57,7 +56,7 @@ def mood(market):
     ]
     warning = None
     if label in ("Caution", "Hostile"):
-        warning = ("The overall market is weak. Short-term buy signals fail more often in a falling "
+        warning = ("The overall market is weak. Buy signals fail more often in a falling "
                    "market, so consider smaller positions or waiting for the mood to improve.")
     hist = market.tail(250)
     return {"label": label, "score": _r(score, 3), "reasons": reasons, "warning": warning,
@@ -242,7 +241,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
                 "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
                 **({"outlook": _r(r["outlook"], 4), "tilt": _r(r["tilt"], 4), "season": _r(r["season"], 4),
-                    "verdict_pre": r["verdict_pre"]} if "exp" in t else {}),
+                    "weekday": _r(r["weekday_adj"], 4), "verdict_pre": r["verdict_pre"]} if "exp" in t else {}),
                 "conf": int(r["conf"]), "verdict": r["verdict"],
                 "score": _r(r["rank_score"], 5), "sscore": _r(r["sell_score"], 5),
                 "rank": int(r["rank"]), "srank": int(per[key]["srank"][sym]),
@@ -264,7 +263,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "liq": _r(math.expm1(p["liq_value"]), 2) if not pd.isna(p["liq_value"]) else None,
             "junk": _r(p["junk_score"], 2),
             "spark": [_r(v, 2) for v in m.close[sym].iloc[-40:].values],
-            "s": horizon_row("short", sym), "l": horizon_row("long", sym),
+            "s": horizon_row("short", sym),
         })
     by_sym = {r["sym"]: r for r in stocks}
 
@@ -337,8 +336,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "metrics": {k: _r(pt.at[sym, k], 4) for k in
                         ["band_all", "band60", "reward_risk", "up_room", "down_risk", "leg_progress", "ret5", "ret20",
                          "rsi", "vol_ratio5", "updown_vol", "trade_size", "vol20", "uc_hits20", "rel_mkt20",
-                         "rel_sec20", "junk_score", "analog_ret_short", "analog_win_short", "analog_ret_long",
-                         "analog_win_long", "regularity", "n_legs", "up_len", "dn_len", "up_pct", "dn_pct",
+                         "rel_sec20", "junk_score", "analog_ret_short", "analog_win_short", "regularity", "n_legs", "up_len", "dn_len", "up_pct", "dn_pct",
                          "med_trades", "history_days"]},
             "series": {"dates": [str(d) for d in idx], "close": ser(m.close), "volume": [_r(v, 0) for v in m.volume[sym][valid]],
                        **{k: ser(bands[k]) for k in bands}},

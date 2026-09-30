@@ -272,3 +272,14 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 .expbox { background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
 .expbox b { font-size: 18px; font-variant-numeric: tabular-nums; }
 .filters .seg button { padding: 6px 16px; }
+
+.phase { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); margin: 2px 4px 0 0; white-space: nowrap; }
+.phase.p-up { background: var(--buy-wash); color: var(--buy-ink); }
+.phase.p-down { background: var(--sell-wash); color: var(--sell-ink); }
+.pathbox { background: var(--surface-2); border-radius: 10px; padding: 6px 8px 2px; }
+.pathbox svg { display: block; }
+.journey { color: var(--ink-2); }
+.qgrid { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; align-items: center; }
+.qgrid .pathbox { padding: 4px 6px 0; }
+.v-strong-sell, .v-strong-buy { box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+@media (max-width: 640px) { .qgrid { grid-template-columns: 1fr; } }

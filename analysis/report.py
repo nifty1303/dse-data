@@ -185,6 +185,22 @@ def sentence(angle, p, ctx, key):
     return angle
 
 
+def journey(p, ph):
+    """One sentence on where the share is on its current swing."""
+    from .expected import PHASE_TEXT
+    if ph == "Sideways" or pd.isna(p["leg_days"]):
+        return "No clear swing yet: the price has been moving sideways."
+    up = p["leg_dir"] == 1
+    typ = p["up_len"] if up else p["dn_len"]
+    move = p["leg_move"]
+    s = (f"{ph}: {PHASE_TEXT[ph]}. It has been {'rising' if up else 'falling'} for {int(p['leg_days'])} trading days "
+         f"({move:+.1%} so far)")
+    if not pd.isna(typ):
+        s += f"; its typical {'rise' if up else 'fall'} lasts about {int(typ)} days"
+    s += f", and it moved {p['ret5']:+.1%} this week."
+    return s
+
+
 def reasons(p, contrib_row, ctx, key, n=3):
     """
     Reasons to buy: angles that lift the score AND whose facts read as good news.
@@ -240,8 +256,10 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         why, caution = reasons(pt.loc[sym], per[key]["contrib"].loc[sym], ctx(sym), key)
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
                 "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
-                **({"outlook": _r(r["outlook"], 4), "tilt": _r(r["tilt"], 4), "season": _r(r["season"], 4),
-                    "weekday": _r(r["weekday_adj"], 4), "verdict_pre": r["verdict_pre"]} if "exp" in t else {}),
+                "phase": r["phase"], "journey": journey(pt.loc[sym], r["phase"]),
+                "target": _r(close_raw[sym] * (1 + r["exp"]), 2),
+                "path_lo": _r(close_raw[sym] * (1 + r["path_lo"]), 2) if "path_lo" in t else None,
+                "path_hi": _r(close_raw[sym] * (1 + r["path_hi"]), 2) if "path_hi" in t else None,
                 "conf": int(r["conf"]), "verdict": r["verdict"],
                 "score": _r(r["rank_score"], 5), "sscore": _r(r["sell_score"], 5),
                 "rank": int(r["rank"]), "srank": int(per[key]["srank"][sym]),
@@ -285,6 +303,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "top": top, "also": also, "sell_top": M.top_list(t, cap=len(t), score="sell_score")[0],
             "new_entries": [s for s in top if s not in prev_top], "dropped": [s for s in prev_top if s not in top],
             "sectors": sectors, "verdicts": {k: int(v) for k, v in t["verdict"].value_counts().items()},
+            "phases": {k: int(v) for k, v in t["phase"].value_counts().items()},
             **h["extra"],
         }
     _dump({
@@ -325,7 +344,9 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             ds = [d for d in recent if sym in tb[d].index]
             hist[key] = {"dates": [str(d) for d in ds], "dir": [_r(tb[d].at[sym, "direction"], 3) for d in ds],
                          "move": [_r(tb[d].at[sym, "move"], 3) for d in ds],
-                         "exp": [_r(tb[d].at[sym, "exp"], 4) for d in ds] if "exp" in tb[recent[-1]] else None}
+                         "exp": [_r(tb[d].at[sym, "exp"], 4) for d in ds],
+                         "verdict": [tb[d].at[sym, "verdict"] for d in ds],
+                         "phase": [tb[d].at[sym, "phase"] for d in ds]}
         detail = {
             **by_sym[sym],
             "info": {k: (info.at[sym, k] if isinstance(info.at[sym, k], str) else _r(info.at[sym, k], 3))

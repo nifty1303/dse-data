@@ -1,39 +1,22 @@
 """
-Expected 2-week price change and the verdict.
+Expected 2-week move, the share's journey, and the verdict.
 
-    expected change = odds outlook + cycle tilt + month season + weekday effect
+Expected move = calibrated chance of a >3% rise x the average such rise + chance of
+a >3% fall x the average such fall + the rest x the average small move.
 
-- Odds outlook: calibrated chance of a >3% rise x the average such rise, plus the
-  chance of a >3% fall x the average such fall, plus the rest x the average small
-  move (averages from the full history).
-- Cycle tilt: average excess return seen in each zone of the 2-year range.
-- Month season: how periods centred on this calendar month did for the average
-  share versus normal (Q4 is DSE's dry season).
-- Weekday effect: how periods bought on this weekday did versus normal
-  (Thursday is the last trading day before DSE's Friday-Saturday weekend).
-The cycle tilt changes the order of shares, so it is kept only if it improves the
-Top 20. Month and weekday effects move every share equally, so they are kept only
-if they make the expected change more accurate on unseen periods. Both calendar
-effects are halved because two years give only a couple of samples each.
+Verdict: the direction comes from the expected move (up = Buy, down = Sell); the
+strength comes from the journey (where the share is on its current swing). Tested
+on unseen data, see analyze.py.
+
+Calendar effects (month, weekday) and a 2-year-cycle tilt were also tested as
+add-ons to the expected move; none improved it, so they are shown for reference only.
 """
 
 import numpy as np
 import pandas as pd
 
 CLIP = (-0.40, 0.60)          # keep one-off pumps from dominating averages
-CYCLE_EDGES = [-9, 0, 0.25, 0.5, 0.75, 1, 9]
-CYCLE_ZONES = ["below regular low", "bottom quarter", "2nd quarter", "3rd quarter", "top quarter", "above regular high"]
-SHRINK = 0.5
-CYCLE_WEIGHTS = [0.5, 1.0, 2.0]
-VERDICT_CUTS = [(0.04, "Strong Buy"), (0.025, "Buy"), (0.01, "Lean Buy")]
 WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
-
-
-def verdict(exp):
-    for cut, name in VERDICT_CUTS:
-        if exp >= cut:
-            return name
-    return "Sell"
 
 
 def outcome_averages(fwd_wide, universe, thr):
@@ -44,38 +27,9 @@ def outcome_averages(fwd_wide, universe, thr):
 
 
 def outlook(odds, avg):
-    """Expected change implied by calibrated buy/sell odds."""
+    """Expected move implied by calibrated buy/sell odds."""
     flat = (1 - odds["buy"] - odds["sell"]).clip(lower=0)
     return odds["buy"] * avg["up"] + odds["sell"] * avg["down"] + flat * avg["flat"]
-
-
-def excess_target(fwd_wide, universe):
-    """Share return minus the average share's return over the same days (both clipped)."""
-    f = fwd_wide.clip(*CLIP)
-    return f.sub(f[universe].mean(axis=1), axis=0)
-
-
-# ------------------------------------------------------------ cycle tilt
-def cycle_table(band, y):
-    zone = pd.cut(band, CYCLE_EDGES, labels=CYCLE_ZONES)
-    return y.groupby(zone, observed=False).mean().fillna(0)
-
-
-def cycle_values(table, band):
-    zone = pd.cut(band, CYCLE_EDGES, labels=CYCLE_ZONES)
-    return pd.Series(zone.map(table).astype(float).values, index=band.index).fillna(0)
-
-
-def cycle_walk_forward(panel, y, days, dates, start=280, step=20):
-    """Cycle tilt for unseen days, each learned only from outcomes known at the time."""
-    parts = []
-    d = panel.index.get_level_values("date")
-    for i in range(start, len(dates), step):
-        known = (d <= dates[i - days - 1]) & y.notna().values
-        table = cycle_table(panel.loc[known, "band_all"], y[known])
-        window = (d >= dates[i]) & (d <= dates[min(i + step, len(dates)) - 1])
-        parts.append(cycle_values(table, panel.loc[window, "band_all"]))
-    return pd.concat(parts).sort_index()
 
 
 # ------------------------------------------------------------ calendar effects
@@ -93,22 +47,11 @@ def market_path(fwd_wide, universe):
     return fwd_wide[universe].clip(*CLIP).mean(axis=1).dropna()
 
 
-def calendar_tables(mk, days, until=None):
-    """Half-shrunk month and weekday effects learned from periods that ended by `until`."""
-    x = mk if until is None else mk[mk.index <= until]
-    base = float(x.mean())
-    month = x.groupby([season_month(d, days) for d in x.index]).mean()
-    wday = x.groupby([weekday(d) for d in x.index]).mean()
-    return {"base": base,
-            "month": ((month - base) * SHRINK).to_dict(), "month_raw": month.to_dict(),
-            "weekday": ((wday - base) * SHRINK).to_dict(), "weekday_raw": wday.to_dict(),
-            "month_n": x.groupby([season_month(d, days) for d in x.index]).size().to_dict()}
-
-
-def calendar_adjust(tables, date, days, use_month, use_weekday):
-    m = tables["month"].get(season_month(date, days), 0.0) if use_month else 0.0
-    w = tables["weekday"].get(weekday(date), 0.0) if use_weekday else 0.0
-    return m, w
+def calendar_tables(mk, days):
+    """Average period return of the average share by month (period midpoint) and by weekday bought."""
+    return {"base": float(mk.mean()),
+            "month_raw": mk.groupby([season_month(d, days) for d in mk.index]).mean().to_dict(),
+            "weekday_raw": mk.groupby([weekday(d) for d in mk.index]).mean().to_dict()}
 
 
 def thursday_stats(close, universe, dates):
@@ -120,3 +63,53 @@ def thursday_stats(close, universe, dates):
     by_day = same.groupby([weekday(d) for d in same.index]).mean()
     return {"next_day_after": {k: float(v) for k, v in by.items()},
             "same_day": {k: float(v) for k, v in by_day.items()}}
+
+
+# ------------------------------------------------------------ journey & verdict
+# Where the share is on its current swing, from the causal swing detector.
+PHASES = ["Bottoming", "Early rise", "Mid rise", "Late rise", "Topping", "Early fall", "Mid fall", "Late fall", "Sideways"]
+PHASE_TEXT = {
+    "Bottoming": "a long fall that has started turning up",
+    "Early rise": "early in a new rise",
+    "Mid rise": "midway through a rise",
+    "Late rise": "a rise that is running longer than usual",
+    "Topping": "a long rise that has started turning down",
+    "Early fall": "early in a new fall",
+    "Mid fall": "midway through a fall",
+    "Late fall": "a fall that is running longer than usual",
+    "Sideways": "no clear swing",
+}
+# Unseen-data check (Nov 2025 - Sep 2026): among shares expected to rise, those
+# bottoming / late in a fall / early in a rise rose most often (~55%); among shares
+# expected to fall, those still falling or topping rose least often (34-41%).
+STRONG_BUY_PHASES = {"Bottoming", "Late fall", "Early rise"}
+STRONG_SELL_PHASES = {"Early fall", "Mid fall", "Late fall", "Topping"}
+STRONG_BUY_MIN = 0.01        # expected move of at least +1%
+STRONG_SELL_MAX = -0.005     # expected move of -0.5% or worse
+TIER = {"Strong Buy": 3, "Buy": 2, "Sell": 1, "Strong Sell": 0}
+
+
+def phase(leg_dir, progress, ret5):
+    """Vectorised journey phase from swing direction, progress vs typical length, and this week's move."""
+    up, down = leg_dir == 1, leg_dir == -1
+    late = progress >= 1.0
+    early = progress < 0.5
+    return pd.Series(np.select(
+        [up & late & (ret5 < 0), up & late, up & early, up,
+         down & late & (ret5 > 0), down & late, down & early, down],
+        ["Topping", "Late rise", "Early rise", "Mid rise", "Bottoming", "Late fall", "Early fall", "Mid fall"],
+        "Sideways"), index=leg_dir.index)
+
+
+def journey_verdict(exp, ph):
+    """Direction from the expected move, strength from the journey."""
+    return pd.Series(np.select(
+        [(exp >= STRONG_BUY_MIN) & ph.isin(STRONG_BUY_PHASES), exp > 0,
+         (exp <= STRONG_SELL_MAX) & ph.isin(STRONG_SELL_PHASES)],
+        ["Strong Buy", "Buy", "Strong Sell"], "Sell"), index=exp.index)
+
+
+def path_quantiles(fwd_wide, days):
+    """Each share's own spread of outcomes over the period: 25th, 50th, 75th percentile."""
+    f = fwd_wide.clip(*CLIP)
+    return f.quantile(0.25), f.quantile(0.5), f.quantile(0.75)

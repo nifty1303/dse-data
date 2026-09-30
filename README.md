@@ -13,13 +13,13 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
 
 - `data/prices.csv`: daily prices for every instrument
 - `data/fundamentals.csv`: weekly company snapshots
-- `data/signals.csv`: each day's 2-week (10 trading days, ±3%) Buy / Sell odds, move chance, expected change, confidence, verdict and rank for every share. It's a forward record the model can never revise.
+- `data/signals.csv`: each day's 2-week (10 trading days) expected move, journey phase, verdict (Strong Buy / Buy / Sell / Strong Sell), odds, confidence and rank for every share. It's a forward record the model can never revise.
 - `update.py`: the downloader
 - `analyze.py` + `analysis/`: the scoring pipeline
   - `prep.py`: loads the data and corrects bonus-share / dividend price drops
   - `features.py`: cycles, 2-year regular range and 3-month swing bands, money flow, junk pattern, market mood, and more
   - `model.py`: the model and the calibrated Buy / Sell odds
-  - `expected.py`: expected 2-week change, verdict bands, and the tested add-ons (cycle tilt, month season, weekday effect)
+  - `expected.py`: expected 2-week move, journey phase (bottoming, early/mid/late rise, topping, early/mid/late fall), verdict rules, projected path, and calendar statistics
   - `backtest.py`: the honest track record
   - `report.py`: the site's data files
 - `site/`: the website (plain HTML/JS). `analyze.py` writes its data into `site/data/`.

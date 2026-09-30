@@ -203,25 +203,25 @@ def reasons(p, contrib_row, ctx, key, n=3):
 
 # ------------------------------------------------------------ main builder
 def build(m, panel, ex, H, market_mood, out_dir, run_kind):
-    """H: {key: {"live": model, "cal": Calibrator, "wk", "calib", "summary"}}."""
+    """H: {key: {"score_days": rows -> {date: table}, "contrib": panel day -> DataFrame,
+                 "wk", "calib", "summary", "extra"}}."""
     dates = m.dates
     today = dates[-1]
     recent = dates[-60:]
     info, btype, stage, W = m.info, ex["btype"], ex["stage"], ex["wide"]
     bands = ex["bands"]
     pt = panel.xs(today, level="date")
-    rows = panel.loc[panel.index.get_level_values("date") >= recent[0]]
+    rows = panel.loc[panel.index.get_level_values("date") >= dates[-62]]   # 2 extra days warm the 3-day smoothing
     close_raw, prev_raw = m.raw_close.iloc[-1], m.raw_close.iloc[-2]
 
     per = {}
     for key, h in H.items():
-        prob = h["cal"].apply(M.smooth(M.predict(h["live"], rows)))
-        tables, tops = {}, {}
-        for d in recent:
-            tables[d] = M.day_table(prob.xs(d, level="date"), panel.xs(d, level="date"), btype.loc[d], info)
-            tops[d] = M.top_list(tables[d])[0]
-        per[key] = {"prob": prob, "tables": tables, "tops": tops, "t": tables[today],
-                    "contrib": M.angle_contributions(h["live"], pt)}
+        tables = h["score_days"](rows)
+        tops = {d: M.top_list(tables[d])[0] for d in recent}
+        per[key] = {"tables": tables, "tops": tops, "t": tables[today], "contrib": h["contrib"](pt)}
+
+    for key in per:
+        per[key]["srank"] = per[key]["t"]["sell_score"].rank(ascending=False, method="first").astype(int)
 
     def days_in_top(key, sym):
         n = 0
@@ -240,8 +240,13 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         r = t.loc[sym]
         why, caution = reasons(pt.loc[sym], per[key]["contrib"].loc[sym], ctx(sym), key)
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
-                "dir": _r(r["direction"], 3), "conf": int(r["conf"]), "verdict": r["verdict"],
-                "rank": int(r["rank"]), "rank_prev": int(yday.at[sym, "rank"]) if sym in yday.index else None,
+                "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
+                **({"outlook": _r(r["outlook"], 4), "tilt": _r(r["tilt"], 4), "season": _r(r["season"], 4),
+                    "verdict_pre": r["verdict_pre"]} if "exp" in t else {}),
+                "conf": int(r["conf"]), "verdict": r["verdict"],
+                "score": _r(r["rank_score"], 5), "sscore": _r(r["sell_score"], 5),
+                "rank": int(r["rank"]), "srank": int(per[key]["srank"][sym]),
+                "rank_prev": int(yday.at[sym, "rank"]) if sym in yday.index else None,
                 "days_top": days_in_top(key, sym), "why": why, "caution": caution}
 
     stocks = []
@@ -274,12 +279,14 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
                             "buy": list(g.sort_values("rank_score", ascending=False).index[:5]),
                             "sell": list(g.sort_values("sell_score", ascending=False).index[:5]),
                             "avg_dir": _r(g["direction"].mean(), 3),
+                            "avg_exp": _r(g["exp"].mean(), 4) if "exp" in g else None,
                             "ret20": _r(W["sec_ret20"].iloc[-1][g.index].mean(), 4)}
         horizons[key] = {
             "label": hz["label"], "long_label": hz["long_label"], "days": hz["days"], "thr": hz["thr"],
             "top": top, "also": also, "sell_top": M.top_list(t, cap=len(t), score="sell_score")[0],
             "new_entries": [s for s in top if s not in prev_top], "dropped": [s for s in prev_top if s not in top],
             "sectors": sectors, "verdicts": {k: int(v) for k, v in t["verdict"].value_counts().items()},
+            **h["extra"],
         }
     _dump({
         "asof": str(today), "run": run_kind,
@@ -303,6 +310,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "curve": curve,
             "calibration": [{k: (v if k == "bucket" else _r(v, 4)) for k, v in rec.items()}
                             for rec in h["calib"].to_dict("records")],
+            "extra": h["extra"],
         }
     _dump(track, f"{out_dir}/track.json")
 
@@ -314,10 +322,11 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         ser = lambda df: [_r(v, 3) for v in df[sym][valid]]
         hist = {}
         for key in H:
-            hp = per[key]["prob"].xs(sym, level="symbol")
-            sc = M.scores(hp)
-            hist[key] = {"dates": [str(d) for d in sc.index], "dir": [_r(v, 3) for v in sc["direction"]],
-                         "move": [_r(v, 3) for v in sc["move"]]}
+            tb = per[key]["tables"]
+            ds = [d for d in recent if sym in tb[d].index]
+            hist[key] = {"dates": [str(d) for d in ds], "dir": [_r(tb[d].at[sym, "direction"], 3) for d in ds],
+                         "move": [_r(tb[d].at[sym, "move"], 3) for d in ds],
+                         "exp": [_r(tb[d].at[sym, "exp"], 4) for d in ds] if "exp" in tb[recent[-1]] else None}
         detail = {
             **by_sym[sym],
             "info": {k: (info.at[sym, k] if isinstance(info.at[sym, k], str) else _r(info.at[sym, k], 3))

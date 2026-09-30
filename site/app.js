@@ -513,12 +513,18 @@
     const [view, arg] = hash.split("/");
     document.querySelectorAll("nav.tabs a").forEach(a => a.classList.toggle("on", a.dataset.v === view));
     let node;
-    if (view === "s" && arg) node = await viewStock(arg);
-    else if (view === "sectors") node = viewSectors();
-    else if (view === "all") node = viewAll();
-    else if (view === "track") node = viewTrack();
-    else if (view === "how") node = viewHow();
-    else node = viewTop();
+    try {
+      if (view === "s" && arg) node = await viewStock(arg);
+      else if (view === "sectors") node = viewSectors();
+      else if (view === "all") node = viewAll();
+      else if (view === "track") node = viewTrack();
+      else if (view === "how") node = viewHow();
+      else node = viewTop();
+    } catch (e) {
+      console.error(e);
+      node = h("div", { class: "note" }, "This page couldn't be shown. Please refresh (Ctrl+Shift+R on a computer). " +
+        "If it keeps happening, the site may be mid-update; try again in a few minutes.");
+    }
     const a = app(); a.textContent = ""; a.appendChild(node);
     if (S.lastHash !== hash) window.scrollTo(0, 0);
     S.lastHash = hash;
@@ -545,6 +551,7 @@
         fetch("data/summary.json", { cache: "no-cache" }).then(r => r.json()),
         fetch("data/track.json", { cache: "no-cache" }).then(r => r.json()),
       ]);
+      if (!s.horizons) throw new Error("old data format");
       S.summary = s; S.track = t;
       s.stocks.forEach(r => { S.bySym[r.sym] = r; });
       document.getElementById("asof").textContent =

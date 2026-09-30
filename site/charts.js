@@ -104,18 +104,19 @@
   function line(box, opts) {
     const all = [];
     opts.series.forEach(s => s.values.forEach(v => v != null && isFinite(v) && all.push(v)));
-    if (opts.band) [opts.band.lo, opts.band.hi].forEach(a => a.forEach(v => v != null && all.push(v)));
+    const bands = opts.bands || (opts.band ? [opts.band] : []);
+    bands.forEach(b => [b.lo, b.hi].forEach(a => a.forEach(v => v != null && all.push(v))));
     let ymin = Math.min(...all), ymax = Math.max(...all);
     const pad = (ymax - ymin) * 0.06 || 1; ymin -= pad; ymax += pad;
     if (opts.zero) ymin = Math.min(ymin, 0);
     const f = frame(box, { ...opts, ymin, ymax });
-    if (opts.band) {
-      const { lo, hi } = opts.band;
-      let d = "", started = false;
+    for (const band of bands) {
+      const { lo, hi } = band;
+      let d = "";
       const idx = lo.map((v, i) => i).filter(i => lo[i] != null && hi[i] != null);
-      idx.forEach((i, k) => { d += (k ? "L" : "M") + f.x(i).toFixed(1) + "," + f.y(hi[i]).toFixed(1); started = true; });
+      idx.forEach((i, k) => { d += (k ? "L" : "M") + f.x(i).toFixed(1) + "," + f.y(hi[i]).toFixed(1); });
       idx.slice().reverse().forEach(i => { d += "L" + f.x(i).toFixed(1) + "," + f.y(lo[i]).toFixed(1); });
-      if (started) f.svg.appendChild(el("path", { d: d + "Z", fill: opts.band.color, opacity: 0.12 }));
+      if (idx.length) f.svg.appendChild(el("path", { d: d + "Z", fill: band.color, opacity: band.opacity ?? 0.12 }));
     }
     for (const s of opts.series) {
       f.svg.appendChild(el("path", { d: path(s.values, f.x, f.y), fill: "none", stroke: s.color,
@@ -139,8 +140,8 @@
     crosshair(box, f, opts.dates, i => {
       const rows = opts.series.filter(s => s.tip !== false).map(s => ({ name: s.name, color: s.color,
         value: s.values[i] == null ? "–" : (s.fmt || opts.yFormat || (v => v))(s.values[i]) }));
-      if (opts.band && opts.band.lo[i] != null) rows.push({ name: opts.band.name, color: opts.band.color,
-        value: `${(opts.yFormat || (v => v))(opts.band.lo[i])}–${(opts.yFormat || (v => v))(opts.band.hi[i])}` });
+      const fmt = opts.yFormat || (v => v);
+      for (const b of bands) if (b.lo[i] != null) rows.push({ name: b.name, color: b.color, value: `${fmt(b.lo[i])}–${fmt(b.hi[i])}` });
       return rows;
     });
     return f;

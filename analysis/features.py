@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 
 HORIZON = 5        # one trading week: sets the swing-detection threshold
-# The timeframe scored: trading days ahead and the move that counts as Buy / Sell.
-# 10 trading days = 2 DSE weeks (Sun-Thu); 3% clears ~1% round-trip brokerage with profit left.
+# The timeframe scored: one month = 20 DSE trading days (Sun-Thu, about 1 Oct -> 1 Nov),
+# with a +5% profit goal. thr is also the band for the rise / fall odds.
 HORIZONS = {
-    "short": {"days": 10, "thr": 0.03, "label": "2 weeks", "after": "2 weeks", "long_label": "next 10 trading days"},
+    "short": {"days": 20, "thr": 0.05, "label": "1 month", "after": "month", "long_label": "next 20 trading days"},
 }
 RANGE_DAYS = 500   # "regular range" = up to 2 years of history (all we have for now)
 ANALOG_K = 7
@@ -239,9 +239,11 @@ def build(m):
     W["junk_x_dist"] = W["type_junk"] * W["stage_distribution"]
 
     # ---- I. similar past setups, for each timeframe
-    fwd, analogs = {}, {}
+    fwd, fwd_max, analogs = {}, {}, {}
     for key, hz in HORIZONS.items():
         fwd[key] = c.shift(-hz["days"]) / c - 1
+        # best close reached within the period (did it touch the profit goal at any point?)
+        fwd_max[key] = c.rolling(hz["days"]).max().shift(-hz["days"]) / c - 1
         a_ret, a_win, analogs[key] = analog_features(W, fwd[key], hz["days"])
         W[f"analog_ret_{key}"], W[f"analog_win_{key}"] = a_ret, a_win
 
@@ -251,7 +253,7 @@ def build(m):
     panel = pd.concat({k: W[k].stack(future_stack=True) for k in FEATURES + INFO_COLS}, axis=1)
     panel.index.names = ["date", "symbol"]
     extras = {"pivots": pivots, "btype": btype, "stage": stage, "market": market,
-              "fwd": fwd, "analogs": analogs, "bands": {"p10_60": p10_60, "p90_60": p90_60,
+              "fwd": fwd, "fwd_max": fwd_max, "analogs": analogs, "bands": {"p10_60": p10_60, "p90_60": p90_60,
               "p10_all": p10_all, "p90_all": p90_all, "min_all": min_all, "max_all": max_all},
               "wide": W}
     return panel, extras

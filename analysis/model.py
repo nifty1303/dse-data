@@ -207,3 +207,67 @@ def day_table(prob, panel_day, btype_day, info):
     t["rank"] = t["rank_score"].rank(ascending=False, method="first").astype(int)
     t["verdict"] = t["direction"].map(verdict)
     return t
+
+
+# ------------------------------------------------------------ the +goal / -goal race
+RACE_COLS = {-1: "stop", 0: "none", 1: "target"}
+
+
+def fit_race(panel, y, last_date):
+    d = panel.index.get_level_values("date")
+    ok = y.notna().values & (panel["history_days"].values >= MIN_HISTORY) & (d <= last_date)
+    X = panel.loc[ok, FEATURES]
+    mdl = new_model().fit(X, y[ok].astype(int))
+    mdl.medians_ = X.median()
+    return mdl
+
+
+def predict_race(mdl, X):
+    p = mdl.predict_proba(X[FEATURES])
+    return pd.DataFrame(p, index=X.index, columns=[RACE_COLS[c] for c in mdl.classes_])
+
+
+def walk_forward_race(panel, y, days, dates, start=280, step=20):
+    parts = []
+    d = panel.index.get_level_values("date")
+    for i in range(start, len(dates), step):
+        mdl = fit_race(panel, y, dates[i - days - 1])
+        window = (d >= dates[i]) & (d <= dates[min(i + step, len(dates)) - 1])
+        parts.append(predict_race(mdl, panel.loc[window]))
+    return pd.concat(parts).sort_index()
+
+
+class RaceCalibrator:
+    """Maps raw race odds to how often the target / stop really came first (anchored to 2-year rates)."""
+
+    def fit(self, oos, y, base_target, base_stop):
+        yy = y.reindex(oos.index)
+        ok = yy.notna().values
+        self.t = _Platt().fit(oos["target"].values[ok], (yy[ok] == 1).astype(int).values, base_target)
+        self.s = _Platt().fit(oos["stop"].values[ok], (yy[ok] == -1).astype(int).values, base_stop)
+        return self
+
+    def apply(self, raw):
+        t, s = self.t(raw["target"].values), self.s(raw["stop"].values)
+        scale = np.where(t + s > 0.97, 0.97 / (t + s), 1.0)
+        return pd.DataFrame({"target": t * scale, "stop": s * scale}, index=raw.index)
+
+
+def smooth_race(raw):
+    s = raw.groupby(level="symbol").rolling(SMOOTH_DAYS, min_periods=1).mean()
+    s.index = s.index.droplevel(0)
+    return s.sort_index()
+
+
+def race_contributions(mdl, X):
+    """Points of (target-first minus stop-first) chance each angle adds."""
+    base = predict_race(mdl, X)
+    edge = base["target"] - base["stop"]
+    out = {}
+    for angle, cols in MODEL_ANGLES.items():
+        Xa = X.copy()
+        for c in cols:
+            Xa[c] = mdl.medians_[c]
+        p = predict_race(mdl, Xa)
+        out[angle] = (edge - (p["target"] - p["stop"])) * 100
+    return pd.DataFrame(out)

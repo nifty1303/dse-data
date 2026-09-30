@@ -330,3 +330,4 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 .alerts .al-info { background: var(--surface-2); color: var(--ink-2); }
 td.adv-good { color: var(--buy-ink); } td.adv-bad { color: var(--sell-ink); font-weight: 600; }
 .pick .top .star { margin-left: -4px; }
+.bs .bar .n { background: var(--neutral); opacity: .45; }

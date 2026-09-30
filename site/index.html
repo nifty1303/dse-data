@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSE Signals</title>
+<meta name="description" content="Daily buy / hold / sell odds for every Dhaka Stock Exchange share, from price, volume and fundamentals data.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#top">DSE Signals</a>
+  <span class="asof" id="asof">Loading…</span>
+  <nav class="tabs" aria-label="Sections"></nav>
+  <button class="theme-btn" id="theme" type="button">Theme: auto</button>
+</div></header>
+<main class="wrap" id="app" aria-live="polite"></main>
+<footer><div class="wrap">Built only from DSE day-end data and weekly company snapshots. Odds, not certainties — a research tool, not financial advice.</div></footer>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

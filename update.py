@@ -34,7 +34,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 PRICE_COLS = ["date", "symbol", "ltp", "high", "low", "open", "close", "ycp", "trade", "value", "volume"]
 FUND_COLS = ["snapshot_date", "symbol", "sector", "market_category", "paid_up_capital_mn",
              "market_cap_mn", "outstanding_shares", "face_value", "reserve_mn",
-             "sponsor_pct", "govt_pct", "institute_pct", "foreign_pct", "public_pct"]
+             "sponsor_pct", "govt_pct", "institute_pct", "foreign_pct", "public_pct",
+             "year_end", "cash_dividend", "bonus_issue", "right_issue", "last_agm"]
+SAMPLE_ROWS = f"{DATA_DIR}/samples/company_page_rows.txt"
 
 
 # ------------------------------------------------------------ basic tools
@@ -153,18 +155,40 @@ LABELS = {
     "reserve & surplus without oci": "reserve_mn",
     "sector": "sector",
     "market category": "market_category",
+    # Dividend history and year end (text as shown on the page, e.g. "10%B 2024, 15% 2023").
+    "year end": "year_end",
+    "cash dividend": "cash_dividend",
+    "bonus issue": "bonus_issue",
+    "right issue": "right_issue",
+    "last agm held on": "last_agm",
 }
-TEXT_FIELDS = {"sector", "market_category"}
+TEXT_FIELDS = {"sector", "market_category", "year_end", "cash_dividend", "bonus_issue", "right_issue", "last_agm"}
+# The page layout for EPS / NAV / P/E could not be checked when this was written, so the
+# weekly run saves one company's matching rows here for the parser to be finished later.
+SAMPLE_KEYWORDS = ("eps", "nav", "p/e", "dividend", "record date", "agm", "year end")
 HOLDING_RE = re.compile(
     r"Sponsor/Director:\s*([\d.]+).*?Govt:\s*([\d.]+).*?Institute:\s*([\d.]+)"
     r".*?Foreign:\s*([\d.]+).*?Public:\s*([\d.]+)", re.S)
 
 
-def fetch_fundamentals(symbol):
+def save_sample_rows(symbol, soup):
+    lines = [f"# {symbol} {date.today()}: table rows mentioning {', '.join(SAMPLE_KEYWORDS)}"]
+    for tr in soup.find_all("tr"):
+        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+        if any(k in " ".join(cells).lower() for k in SAMPLE_KEYWORDS):
+            lines.append(" | ".join(cells))
+    os.makedirs(os.path.dirname(SAMPLE_ROWS), exist_ok=True)
+    with open(SAMPLE_ROWS, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def fetch_fundamentals(symbol, sample=False):
     html = get_page("displayCompany.php", {"name": symbol})
     if html is None or "Paid-up Capital" not in html:
         return None
     soup = BeautifulSoup(html, "lxml")
+    if sample:
+        save_sample_rows(symbol, soup)
     out = {"snapshot_date": date.today().isoformat(), "symbol": symbol}
     for tr in soup.find_all("tr"):
         cells = tr.find_all(["th", "td"])
@@ -187,7 +211,7 @@ def fundamentals():
     symbols = sorted(prices.loc[prices["date"] == prices["date"].max(), "symbol"])
     rows, missing = [], []
     for i, sym in enumerate(symbols, 1):
-        row = fetch_fundamentals(sym)
+        row = fetch_fundamentals(sym, sample=not rows)
         (rows.append(row) if row else missing.append(sym))
         if i % 50 == 0:
             print(f"[{i}/{len(symbols)}]")

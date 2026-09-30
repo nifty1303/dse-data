@@ -3,8 +3,8 @@ name: Daily prices
 on:
   schedule:
     # Times are in UTC (Dhaka = UTC + 6). Days 0-4 = Sunday to Thursday.
-    - cron: "45 8 * * 0-4"   # 2:45 PM Dhaka: today only
-    - cron: "0 10 * * 0-4"   # 4:00 PM Dhaka: last 5 days
+    - cron: "45 8 * * 0-4"   # 2:45 PM Dhaka: today only, site marked preliminary (~3 PM)
+    - cron: "0 10 * * 0-4"   # 4:00 PM Dhaka: last 5 days, final site (~4:10 PM)
   workflow_dispatch:
     inputs:
       mode:
@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 # Runs of both workflows wait for each other, so two updates never save at the same time.
 concurrency:
@@ -33,7 +35,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +56,7 @@ jobs:
             python update.py daily ${{ inputs.lookback_days || '5' }}
           fi
 
-      - name: Save to repository
+      - name: Save prices to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -62,3 +64,33 @@ jobs:
           git diff --cached --quiet || git commit -m "Prices update $(date -u +%F)"
           git pull --rebase
           git push
+
+      # Prices are already saved above, so a failure from here on never loses data.
+      - name: Score shares and build site
+        run: |
+          if [ "${{ github.event.schedule }}" = "45 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
+            python analyze.py --run prelim
+          else
+            python analyze.py --run final
+          fi
+
+      - name: Save today's scores to repository
+        run: |
+          git add data/signals.csv
+          git diff --cached --quiet || git commit -m "Signals $(date -u +%F)"
+          git pull --rebase
+          git push
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

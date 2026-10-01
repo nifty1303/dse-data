@@ -332,3 +332,6 @@ td.adv-good { color: var(--buy-ink); } td.adv-bad { color: var(--sell-ink); font
 .pick .top .star { margin-left: -4px; }
 .bs .bar .n { background: var(--neutral); opacity: .45; }
 .chg li { color: var(--ink-2, inherit); }
+.expbox.odds .oddrow { display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.expbox.odds .oddrow b { font-size: 22px; margin-right: 2px; }
+.expbox.odds .small { margin-top: 6px; }

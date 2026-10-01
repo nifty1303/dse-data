@@ -84,11 +84,12 @@ PHASE_TEXT = {
 # or at the end of the month if neither comes.
 COST = 0.01           # round-trip brokerage and fees
 TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
-# Tag rules (tested on unseen days in analyze.py):
-BUY_LEAD = 0.10       # Buy: chance(+5% first) beats chance(stop first) by 10+ points
-BUY_TOP = 0.10        #      and among the top 10% of shares by expected result today
-SELL_BOTTOM = 0.10    # Sell: stop more likely first than +5% (more likely to fall),
-                      #       or among the bottom 10% of shares by expected result today
+# Tag rules, all on the lead = chance(+5% first) - chance(stop first) (tested on unseen days in analyze.py):
+BUY_LEAD = 0.10       # Buy: lead of 10+ points,
+BUY_TOP = 0.10        #      among the top 10% of shares by lead today,
+JUNK_LEAD = 0.20      #      20+ points for operator / junk shares (their odds are less reliable),
+NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way
+# Sell: the stop is more likely to come first than +5% (the price is more likely to fall)
 
 
 def race(close, days, goal, stop):
@@ -114,14 +115,15 @@ def trade_value(pt, ps, goal, stop, flat_avg):
     return goal * pt - stop * ps + flat_avg * (1 - pt - ps).clip(lower=0) - COST
 
 
-def race_tag(pt, ps, value, universe=None):
-    """Returns (tag, today's Buy bar, today's Sell bar) on expected result."""
-    ref = value if universe is None else value[value.index.isin(universe)]
-    buy_bar = float(ref.quantile(1 - BUY_TOP)) if len(ref) else np.inf
-    sell_bar = float(ref.quantile(SELL_BOTTOM)) if len(ref) else -np.inf
-    buy = (pt - ps >= BUY_LEAD) & (value >= buy_bar)
-    sell = (ps > pt) | (value <= sell_bar)
-    return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index), buy_bar, sell_bar
+def race_tag(pt, ps, phase, junk, universe=None):
+    """Returns (tag, today's Buy bar on the lead)."""
+    lead = pt - ps
+    ref = lead if universe is None else lead[lead.index.isin(universe)]
+    bar = max(float(ref.quantile(1 - BUY_TOP)) if len(ref) else np.inf, BUY_LEAD)
+    need = np.where(junk, np.maximum(bar, JUNK_LEAD), bar)
+    buy = (lead >= need) & ~phase.isin(NO_BUY_PHASES)
+    sell = ps > pt
+    return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index), bar
 
 
 def phase(leg_dir, progress, ret5):

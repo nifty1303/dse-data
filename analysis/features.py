@@ -180,6 +180,10 @@ def build(m):
     W["gap_down20"] = _sum((o / c.shift(1) - 1 < -0.05).astype(float), 20)
     W["stop_dist"], W["stop_basis"] = dynamic_stop(c, W["vol20"])
     W["stop_sig"] = (W["stop_dist"] / (W["vol20"] * np.sqrt(20)).replace(0, np.nan)).clip(0, 5)
+    avg2y = c.rolling(RANGE_DAYS, min_periods=120).mean()
+    W["dev2y"] = (c / avg2y - 1).clip(-0.9, 3)
+    W["target_dist"], W["target_basis"] = dynamic_target(c, W["vol20"], {1: c.rolling(60, min_periods=20).max(), 2: avg2y, 3: p90_all})
+    W["target_stop"] = (W["target_dist"] / W["stop_dist"]).clip(0, 5)
 
     # ---- F. relative strength & market
     mk = m.index
@@ -287,6 +291,31 @@ def dynamic_stop(c, vol):
     return dist, basis.where(c.notna())
 
 
+GOAL_MIN, GOAL_MAX = 0.05, 0.15
+TARGET_BASIS = {0: "minimum goal", 1: "3-month high", 2: "2-year average", 3: "top of regular range"}
+
+
+def dynamic_target(c, vol, levels):
+    """
+    Each share's own take-profit (never below +5%), known on the day: the nearest resistance
+    above the price, less 1% so the sell order gets filled before it - the 3-month high, the
+    2-year average, or the top of the 2-year regular range - if it is at least 5% away and
+    within what the share usually moves in a month (1.2 x daily swing x sqrt(20), max 15%).
+    Otherwise +5%.
+    """
+    sd = vol.clip(0.005, 0.08).fillna(0.02)
+    cap = (1.2 * sd * np.sqrt(20)).clip(GOAL_MIN, GOAL_MAX)
+    best = pd.DataFrame(np.inf, index=c.index, columns=c.columns)
+    basis = pd.DataFrame(0.0, index=c.index, columns=c.columns)
+    for code, lvl in levels.items():
+        d = lvl * 0.99 / c - 1
+        ok = (d >= GOAL_MIN) & (d <= cap) & (d < best)
+        best = best.mask(ok, d)
+        basis = basis.mask(ok, code)
+    dist = best.where(np.isfinite(best), GOAL_MIN).where(c.notna())
+    return dist, basis.where(c.notna())
+
+
 def market_state(m, W, ret):
     eq = m.info.index[m.info["is_equity"] & ~m.info["is_fund"]]
     mk = m.index
@@ -388,13 +417,14 @@ def analog_features(W, fwd, horizon):
 
 # ------------------------------------------------------------ feature list
 ANGLES = {
-    "Cycle position": ["band_all", "band60", "reward_risk", "leg_dir", "leg_progress", "leg_done",
+    "Cycle position": ["dev2y", "band_all", "band60", "reward_risk", "leg_dir", "leg_progress", "leg_done",
                        "up_leg_young", "down_leg_old", "cyc_x_band"],
     "Trend & momentum": ["ret5", "ret10", "ret20", "ret60", "dist_ma20", "dist_ma50", "ma20_slope",
                          "rsi", "higher_low"],
     "Money flow": ["vol_ratio5", "vol_ratio20", "updown_vol", "trade_size", "close_loc", "pv_diverge"],
     "Liquidity": ["liq_value", "zero_days"],
-    "Risk": ["vol20", "vol60", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20", "stop_dist", "stop_sig"],
+    "Risk": ["vol20", "vol60", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20", "stop_dist", "stop_sig",
+             "target_dist", "target_stop"],
     "Relative strength": ["rel_mkt5", "rel_mkt20", "rel_sec5", "rel_sec20", "sec_ret20"],
     "Market mood": ["mkt_ret5", "mkt_ret20", "breadth", "adv_dec5", "turnover_trend", "mood"],
     "Fundamentals": ["cat_A", "cat_B", "cat_Z", "is_fund", "is_bond", "log_mcap", "sponsor_pct",
@@ -410,5 +440,5 @@ FEATURES = [f for fs in ANGLES.values() for f in fs]
 # shares beat others. Backtests improved without it, so it drives the warning banner only.
 MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
 MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
-INFO_COLS = ["stop_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
+INFO_COLS = ["stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

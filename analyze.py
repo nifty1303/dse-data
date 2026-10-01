@@ -5,13 +5,14 @@ build the website data.
     python analyze.py                 # full run, writes site/data/
     python analyze.py --run prelim    # label the page as the 3 PM preliminary update
 
-The plan is a race: buy today, sell at +5% (target) or at the share's own stop-loss (from
-its supports and volatility), whichever close comes first, or at the end of the month. For each share:
+The plan is a race: buy today, sell at the share's own take-profit (at least +5%, up to its
+nearest resistance) or at its own stop-loss (from its supports and volatility), whichever close comes first, or at the end of the month. For each share:
 - calibrated chances that the target comes first / the stop comes first / neither
 - expected trade result after ~1% round-trip costs
-- tag from the lead (target-first minus stop-first chance): Buy when the lead is 10+ points
-  and in today's top 10% (20+ for junk shares) and the share is not Topping or in a Mid fall;
-  Sell when the stop is more likely to come first; else Neutral
+- tag from fixed levels: Buy when the lead (target-first minus stop-first chance) is +15 or
+  more (+25 for junk shares), the price is below its 2-year average and the share is not
+  Topping or in a Mid fall; Sell when the stop is more likely first while the price is at or
+  above its 2-year average, or the price is 20%+ above that average without a +15 lead
 - journey, trade plan (buy zone, target, stop, sell-by date) and projected range
 
 Everything is checked walk-forward on periods the model never saw, and today's scores
@@ -38,21 +39,20 @@ def log(msg, t0=[time.time()]):
     print(f"[{time.time() - t0[0]:6.1f}s] {msg}", flush=True)
 
 
-SHARES = None
-
-
 def build_table(t, panel_day, goal, flat_avg):
     """Day table (buy = target-first chance, sell = stop-first chance) -> trade value, tag, ranking."""
     t = t.copy()
     p = panel_day.reindex(t.index)
     t["hit"], t["stop_p"] = t["buy"], t["sell"]
     t["stop_dist"] = p["stop_dist"].fillna(0.08)
-    t["value"] = E.trade_value(t["buy"], t["sell"], goal, t["stop_dist"], flat_avg)
+    t["target_dist"] = p["target_dist"].fillna(goal)
+    t["value"] = E.trade_value(t["buy"], t["sell"], t["target_dist"], t["stop_dist"], flat_avg)
     t["exp"] = t["value"] + E.COST                                               # gross expected result
     t["phase"] = E.phase(p["leg_dir"], p["leg_progress"], p["ret5"])
     t["junk"] = p["type_junk"].fillna(0) > 0
+    t["dev2y"], t["band_all"] = p["dev2y"], p["band_all"]
     t["lead"] = t["buy"] - t["sell"]
-    t["verdict"], t["buy_cut"] = E.race_tag(t["buy"], t["sell"], t["phase"], t["junk"], SHARES)
+    t["verdict"] = E.race_tag(t["buy"], t["sell"], t["phase"], t["junk"], t["dev2y"].fillna(0))
     t["tier"] = t["verdict"].map(E.TIER)
     t["rank_score"] = t["tier"] + t["lead"] + 1e-6 * t["conf"]
     t["sell_score"] = (2 - t["tier"]) - t["lead"] + 1e-6 * t["conf"]
@@ -113,16 +113,14 @@ def main():
     days, goal = hz["days"], hz["thr"]
     equities = m.info.index[m.info["is_equity"]]
     shares = m.info.index[m.info["is_equity"] & ~m.info["is_fund"]]
-    global SHARES
-    SHARES = shares
     btype, info = ex["btype"], m.info
-    stop_w = ex["wide"]["stop_dist"]
-    lab_w, res_w = E.race(m.close, days, goal, stop_w)
+    stop_w, tgt_w = ex["wide"]["stop_dist"], ex["wide"]["target_dist"]
+    lab_w, res_w = E.race(m.close, days, tgt_w, stop_w)
     lab, res = lab_w.stack(future_stack=True).reindex(panel.index), res_w.stack(future_stack=True).reindex(panel.index)
     le, re_ = lab_w[equities].stack(), res_w[equities].stack()
     base_t, base_s = float((le == 1).mean()), float((le == -1).mean())
     flat_avg = float(re_[le == 0].mean())
-    log(f"race +{goal:.0%} vs own stop (median {stop_w[equities].stack().median():.1%}) over {days} sessions: target first {base_t:.0%}, stop first {base_s:.0%}, "
+    log(f"race own target (median {tgt_w[equities].stack().median():.1%}) vs own stop (median {stop_w[equities].stack().median():.1%}) over {days} sessions: target first {base_t:.0%}, stop first {base_s:.0%}, "
         f"neither {1 - base_t - base_s:.0%} (avg {flat_avg:+.1%})")
 
     # ---- calibrated race odds, walk-forward (unseen) and live
@@ -170,7 +168,7 @@ def main():
     cal_live = E.calendar_tables(mk, days)
     today = m.dates[-1]
     extra = {
-        "goal": goal, "buy_lead": E.BUY_LEAD, "buy_top": E.BUY_TOP, "junk_lead": E.JUNK_LEAD, "no_buy_phases": list(E.NO_BUY_PHASES), "cost": E.COST, "base_target": base_t, "base_stop": base_s,
+        "goal": goal, "buy_lead": E.BUY_LEAD, "junk_lead": E.JUNK_LEAD, "sell_dev": E.SELL_DEV, "no_buy_phases": list(E.NO_BUY_PHASES), "cost": E.COST, "base_target": base_t, "base_stop": base_s,
         "flat_avg": flat_avg, "verdict_check": tcheck, "deciles": deciles,
         "sell_by": (pd.Timestamp(today) + pd.Timedelta(days=1) + pd.DateOffset(months=1)).strftime("%Y-%m-%d"),   # bought next session
         "phase_text": E.PHASE_TEXT,

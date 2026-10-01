@@ -46,7 +46,7 @@ def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names, goal
             "hold_end": f_end.reindex(top).mean() - cost,
             "goal_rate": (fmax.loc[d].reindex(top) >= goal).mean() if goal else float("nan"),
             "turnover": turnover, "hit_rate": (f.reindex(top) > 0).mean(),
-            "target_rate": (f.reindex(top) >= thr - 1e-9).mean(), "sell_fell": (f.reindex(sells) < 0).mean(),
+            "target_rate": ((label.loc[d].reindex(top) == 1).mean() if label is not None else (f.reindex(top) >= thr - 1e-9).mean()), "sell_fell": (f.reindex(sells) < 0).mean(),
             "stop_rate": ((label.loc[d] if label is not None else -(f <= -thr + 1e-9).astype(float)).reindex(top) == -1).mean(),
             "sell_stop": ((label.loc[d] if label is not None else -(f <= -thr + 1e-9).astype(float)).reindex(sells) == -1).mean(),
             "picks": ",".join(top)})

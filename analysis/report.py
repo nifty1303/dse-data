@@ -209,41 +209,37 @@ STOP_TEXT = {
 
 
 def tag_reason(r, price, goal, sell_by, rank_pct, basis):
-    """Rule checks behind the tag, and a plain-language rationale."""
-    from .expected import BUY_LEAD, BUY_TOP, SELL_BOTTOM
-    pt, ps, value, sd = float(r["hit"]), float(r["stop_p"]), float(r["value"]), float(r["stop_dist"])
+    """Rule checks behind the tag, a one-line verdict and the plan's rationale, all from the lead."""
+    from .expected import BUY_TOP, JUNK_LEAD, NO_BUY_PHASES
+    pt, ps, sd = float(r["hit"]), float(r["stop_p"]), float(r["stop_dist"])
     up, dn = price * (1 + goal), price * (1 - sd)
-    lead = pt - ps
-    top = (f"top {max(1, round(100 * (1 - rank_pct)))}%" if rank_pct >= 0.5 else f"bottom {max(1, round(100 * rank_pct))}%")
-    buy = [{"ok": bool(lead >= BUY_LEAD),
-            "text": f"+{goal:.0%} first (Tk {up:,.2f}) is {pt:.0%} vs {ps:.0%} for its stop first (Tk {dn:,.2f}): "
-                    f"{lead * 100:+.0f} points (needs +{BUY_LEAD * 100:.0f})"},
-           {"ok": bool(value >= r["buy_cut"]),
-            "text": f"Expected result {value:+.1%} after costs is in the top {BUY_TOP:.0%} of shares today "
-                    f"(bar {r['buy_cut']:+.1%}; this share is in the {top})"}]
-    sell = [{"ok": bool(ps > pt), "text": f"More likely to close at its stop (Tk {dn:,.2f}, −{sd:.1%}) than at +{goal:.0%} first ({ps:.0%} vs {pt:.0%})"},
-            {"ok": bool(value <= r["sell_cut"]),
-             "text": f"Expected result {value:+.1%} is in the bottom {SELL_BOTTOM:.0%} of shares today (bar {r['sell_cut']:+.1%})"}]
+    lead, bar, junk, ph = pt - ps, float(r["buy_cut"]), bool(r["junk"]), r["phase"]
+    need = max(bar, JUNK_LEAD) if junk else bar
+    where = (f"top {max(1, round(100 * (1 - rank_pct)))}%" if rank_pct >= 0.5 else f"bottom {max(1, round(100 * rank_pct))}%")
+    buy = [{"ok": bool(lead >= need),
+            "text": f"+{goal:.0%} first (Tk {up:,.2f}) {pt:.0%} vs stop first (Tk {dn:,.2f}) {ps:.0%}: lead {lead * 100:+.0f} points; "
+                    f"needs {need * 100:+.0f} today (top {BUY_TOP:.0%} of shares, at least +10" + (f", +{JUNK_LEAD * 100:.0f} for operator / junk shares" if junk else "") +
+                    f"; this share is in the {where})"},
+           {"ok": bool(ph not in NO_BUY_PHASES),
+            "text": f"Journey is not Topping or Mid fall (it is {ph})"}]
+    sell = [{"ok": bool(ps > pt), "text": f"Stop first (Tk {dn:,.2f}, −{sd:.1%}) is more likely than +{goal:.0%} first: {ps:.0%} vs {pt:.0%}"}]
     if r["verdict"] == "Sell":
-        why = (f"Sell: " + (f"it is more likely to fall to its stop (Tk {dn:,.2f}, −{sd:.1%}) than to reach +{goal:.0%} (Tk {up:,.2f}) "
-                            f"first by {sell_by} ({ps:.0%} vs {pt:.0%})" if ps > pt else
-                            f"its expected result for the month is {value:+.1%} after costs, among the weakest {SELL_BOTTOM:.0%} of shares today")
-               + ". The price is more likely to go down than give you 5%.")
+        why = (f"Sell: it is more likely to fall to its stop (Tk {dn:,.2f}, −{sd:.1%}) than to reach +{goal:.0%} (Tk {up:,.2f}) "
+               f"first by {sell_by}: {ps:.0%} vs {pt:.0%}.")
     elif r["verdict"] == "Buy":
-        why = (f"Buy: {pt:.0%} chance of reaching +{goal:.0%} (Tk {up:,.2f}) before {sell_by} without first falling to its stop "
-               f"(Tk {dn:,.2f}, −{sd:.1%}), against {ps:.0%} for the stop. Expected result {value:+.1%} after costs, "
-               f"in the {top} of shares today.")
+        why = (f"Buy: {pt:.0%} chance of reaching +{goal:.0%} (Tk {up:,.2f}) before {sell_by} against {ps:.0%} of first falling to its "
+               f"stop (Tk {dn:,.2f}, −{sd:.1%}). A lead of {lead * 100:.0f} points, in the {where} of shares today, and the journey ({ph}) allows a Buy.")
     else:
         miss = []
-        if lead < BUY_LEAD:
-            miss.append(f"the +{goal:.0%} target leads the stop by only {lead * 100:+.0f} points")
-        if value < r["buy_cut"]:
-            miss.append(f"its expected result ({value:+.1%}) is not in today's top {BUY_TOP:.0%}")
-        why = f"Neutral: no clear edge. " + (" and ".join(miss).capitalize() + "." if miss else "")
-    # rationale: the full trade thesis
+        if lead < need:
+            miss.append(f"its lead of {lead * 100:+.0f} points is below today's Buy bar of {need * 100:+.0f}")
+        if ph in NO_BUY_PHASES:
+            miss.append(f"it is {ph.lower()}" + (": the rise is tiring, so wait for a pullback or a bottom" if ph == "Topping"
+                                                  else ": the fall is still under way, so wait for it to bottom out"))
+        why = "Neutral: " + ("; ".join(miss) + "." if miss else "no clear edge.")
     rr = goal / sd
     be = sd / (goal + sd)
-    rat = [f"Odds for the month: +{goal:.0%} first {pt:.0%}, stop first {ps:.0%}, neither {max(0.0, 1 - pt - ps):.0%}.",
+    rat = [f"Odds by {sell_by}: +{goal:.0%} first {pt:.0%}, stop first {ps:.0%}, neither {max(0.0, 1 - pt - ps):.0%}.",
            f"Stop-loss Tk {dn:,.2f} (−{sd:.1%}): " + basis + ".",
            f"Reward : risk is {rr:.1f} : 1 (+{goal:.0%} vs −{sd:.1%}); before costs you break even if +{goal:.0%} comes first "
            f"in more than {be:.0%} of the decided trades, and this share's odds give {pt / max(pt + ps, 1e-9):.0%}."]
@@ -262,8 +258,6 @@ def change_text(r, y, price, goal):
         out.append(f"+{goal:.0%}-first chance {y['hit']:.0%} → {r['hit']:.0%}, stop-first {y['stop_p']:.0%} → {r['stop_p']:.0%}.")
     if abs(r["stop_dist"] - y["stop_dist"]) >= 0.005:
         out.append(f"Stop distance {y['stop_dist']:.1%} → {r['stop_dist']:.1%}.")
-    if abs(r["value"] - y["value"]) >= 0.002:
-        out.append(f"Expected result {y['value']:+.1%} → {r['value']:+.1%}.")
     return out or ["No meaningful change since the previous session."]
 
 
@@ -332,6 +326,8 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         return {"price": close_raw[sym], "lo": bands["p10_all"][sym].iloc[-1], "hi": bands["p90_all"][sym].iloc[-1]}
 
     h_extra = next(iter(H.values()))["extra"]
+    last2y = m.close.iloc[-500:]
+    dev2 = (m.close.iloc[-1] / last2y.mean() - 1).where(last2y.notna().sum() >= 120)        # vs 2-year average (bonus-adjusted)
     shares = info.index[info["is_equity"] & ~info["is_fund"]]
 
     def horizon_row(key, sym):
@@ -340,13 +336,21 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         why, caution = reasons(pt.loc[sym], per[key]["contrib"].loc[sym], ctx(sym), key)
         goal, sell_by = h_extra["goal"], pd.Timestamp(h_extra["sell_by"]).strftime("%d %b %Y").lstrip("0")
         price = float(close_raw[sym])
-        sv = t.loc[t.index.isin(shares), "value"]
-        rank_pct = float((sv < r["value"]).mean())
+        sv = t.loc[t.index.isin(shares), "lead"]
+        rank_pct = float((sv < r["lead"]).mean())
         code = int(pt.at[sym, "stop_basis"]) if not pd.isna(pt.at[sym, "stop_basis"]) else 2
         vd = float(np.clip(pt.at[sym, "vol20"] if not pd.isna(pt.at[sym, "vol20"]) else 0.02, 0.005, 0.08))
         basis = STOP_TEXT[code].format(lvl=price * (1 - float(r["stop_dist"])) / (1 - 0.5 * vd))
         rule_buy, rule_sell, tag_why, rationale = tag_reason(r, price, goal, sell_by, rank_pct, basis)
         rationale.append(journey(pt.loc[sym], r["phase"]))
+        dv = float(dev2[sym]) if not pd.isna(dev2[sym]) else None
+        if dv is not None:
+            rationale.append(f"Price vs its 2-year average (Tk {price / (1 + dv):,.2f}): {dv:+.1%} — "
+                             + ("well above its usual level, so more room to fall back." if dv > 0.15 else
+                                "above its usual level." if dv > 0.03 else
+                                "close to its usual level." if dv >= -0.03 else
+                                "below its usual level." if dv >= -0.15 else
+                                "well below its usual level, cheap by its own history (but it may be cheap for a reason)."))
         changes = change_text(r, yday.loc[sym] if sym in yday.index else None, price, goal)
         since, n_days = today, 0
         for d in reversed(recent):
@@ -362,7 +366,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
                          "it is thinly traded: a stop-loss may fill well below its level."))
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
                 "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
-                "hit": _r(r["hit"], 3), "stop_p": _r(r["stop_p"], 3), "value": _r(r["value"], 4),
+                "hit": _r(r["hit"], 3), "stop_p": _r(r["stop_p"], 3), "lead": _r(r["lead"], 3),
                 "stop_dist": _r(r["stop_dist"], 4), "rationale": rationale, "changes": changes,
                 "phase": r["phase"], "journey": journey(pt.loc[sym], r["phase"]),
                 "target": _r(close_raw[sym] * (1 + r["exp"]), 2),
@@ -384,6 +388,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "sym": sym, "sector": info.at[sym, "sector"], "cat": info.at[sym, "market_category"],
             "type": TYPE_LABEL.get(btype.at[today, sym], "Mixed"), "stage": STAGE_LABEL.get(stage.at[today, sym], "Quiet"),
             "close": _r(close_raw[sym], 2), "chg": _r(close_raw[sym] / prev_raw[sym] - 1, 4),
+            "dev2y": _r(dev2[sym], 4), "avg2y": _r(close_raw[sym] / (1 + dev2[sym]), 2) if not pd.isna(dev2[sym]) else None,
             "band": _r(p["band_all"], 3), "swing": _r(p["band60"], 3),
             "up_room": _r(p["up_room"], 3), "down_risk": _r(p["down_risk"], 3),
             "leg": int(p["leg_dir"]) if not pd.isna(p["leg_dir"]) else 0,
@@ -406,7 +411,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
                             "buy": list(g.sort_values("rank_score", ascending=False).index[:5]),
                             "sell": list(g.sort_values("sell_score", ascending=False).index[:5]),
                             "avg_dir": _r(g["direction"].mean(), 3),
-                            "avg_exp": _r(g["exp"].mean(), 4) if "exp" in g else None,
+                            "avg_exp": _r(g["lead"].mean(), 3),
                             "ret20": _r(W["sec_ret20"].iloc[-1][g.index].mean(), 4)}
         horizons[key] = {
             "label": hz["label"], "long_label": hz["long_label"], "days": hz["days"], "thr": hz["thr"],
@@ -454,7 +459,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             ds = [d for d in recent if sym in tb[d].index]
             hist[key] = {"dates": [str(d) for d in ds], "dir": [_r(tb[d].at[sym, "direction"], 3) for d in ds],
                          "move": [_r(tb[d].at[sym, "move"], 3) for d in ds],
-                         "exp": [_r(tb[d].at[sym, "exp"], 4) for d in ds],
+                         "exp": [_r(tb[d].at[sym, "lead"], 3) for d in ds],
                          "verdict": [tb[d].at[sym, "verdict"] for d in ds],
                          "phase": [tb[d].at[sym, "phase"] for d in ds]}
         detail = {

@@ -178,6 +178,8 @@ def build(m):
     W["lc_hits20"] = _sum((ret <= -0.095).astype(float), 20)
     W["drawdown120"] = (c / max120 - 1).clip(-1, 0)
     W["gap_down20"] = _sum((o / c.shift(1) - 1 < -0.05).astype(float), 20)
+    W["stop_dist"], W["stop_basis"] = dynamic_stop(c, W["vol20"])
+    W["stop_sig"] = (W["stop_dist"] / (W["vol20"] * np.sqrt(20)).replace(0, np.nan)).clip(0, 5)
 
     # ---- F. relative strength & market
     mk = m.index
@@ -257,6 +259,32 @@ def build(m):
               "p10_all": p10_all, "p90_all": p90_all, "min_all": min_all, "max_all": max_all},
               "wide": W}
     return panel, extras
+
+
+STOP_RANGE = (0.03, 0.12)
+STOP_BASIS = {0: "20-day low", 1: "3-month low", 2: "volatility"}
+
+
+def dynamic_stop(c, vol):
+    """
+    Each share's own stop-loss distance, known on the day (no look-ahead):
+    just under the nearest support (lowest close of the last 20 sessions, else of the
+    last 60), less half a normal day's move as a buffer; used only if it sits between
+    max(3%, 1.2 normal days) and 12% below the price. Otherwise a volatility stop:
+    the share's usual 2-week swing, clipped to 4-12%.
+    """
+    sd = vol.clip(0.005, 0.08).fillna(0.02)
+    lo = np.maximum(STOP_RANGE[0], 1.2 * sd)
+    dist = pd.DataFrame(np.nan, index=c.index, columns=c.columns)
+    basis = pd.DataFrame(2.0, index=c.index, columns=c.columns)
+    for code, n in [(1, 60), (0, 20)]:                  # 20-day low overwrites, so it wins when both fit
+        d = 1 - c.rolling(n, min_periods=10).min() * (1 - 0.5 * sd) / c
+        ok = (d >= lo) & (d <= STOP_RANGE[1])
+        dist = dist.mask(ok, d)
+        basis = basis.mask(ok, code)
+    volstop = (sd * np.sqrt(10)).clip(0.04, STOP_RANGE[1])
+    dist = dist.fillna(volstop).where(c.notna())
+    return dist, basis.where(c.notna())
 
 
 def market_state(m, W, ret):
@@ -366,7 +394,7 @@ ANGLES = {
                          "rsi", "higher_low"],
     "Money flow": ["vol_ratio5", "vol_ratio20", "updown_vol", "trade_size", "close_loc", "pv_diverge"],
     "Liquidity": ["liq_value", "zero_days"],
-    "Risk": ["vol20", "vol60", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20"],
+    "Risk": ["vol20", "vol60", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20", "stop_dist", "stop_sig"],
     "Relative strength": ["rel_mkt5", "rel_mkt20", "rel_sec5", "rel_sec20", "sec_ret20"],
     "Market mood": ["mkt_ret5", "mkt_ret20", "breadth", "adv_dec5", "turnover_trend", "mood"],
     "Fundamentals": ["cat_A", "cat_B", "cat_Z", "is_fund", "is_bond", "log_mcap", "sponsor_pct",
@@ -382,5 +410,5 @@ FEATURES = [f for fs in ANGLES.values() for f in fs]
 # shares beat others. Backtests improved without it, so it drives the warning banner only.
 MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
 MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
-INFO_COLS = ["up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
+INFO_COLS = ["stop_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

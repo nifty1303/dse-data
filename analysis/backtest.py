@@ -21,7 +21,7 @@ def rebalance_dates(oos_index, m, days):
     return [d for d in dates[::days] if m.dates.get_loc(d) + days < len(m.dates)]
 
 
-def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names, goal=None, result=None):
+def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names, goal=None, result=None, label=None):
     """tables: {date: day table with sector, rank_score, sell_score and calib_col}."""
     fwd, mk = ex["fwd"][key], m.index
     fmax = ex["fwd_max"][key]
@@ -47,7 +47,8 @@ def run(m, ex, key, days, thr, tables, calib_col, calib_edges, calib_names, goal
             "goal_rate": (fmax.loc[d].reindex(top) >= goal).mean() if goal else float("nan"),
             "turnover": turnover, "hit_rate": (f.reindex(top) > 0).mean(),
             "target_rate": (f.reindex(top) >= thr - 1e-9).mean(), "sell_fell": (f.reindex(sells) < 0).mean(),
-            "stop_rate": (f.reindex(top) <= -thr + 1e-9).mean(), "sell_stop": (f.reindex(sells) <= -thr + 1e-9).mean(),
+            "stop_rate": ((label.loc[d] if label is not None else -(f <= -thr + 1e-9).astype(float)).reindex(top) == -1).mean(),
+            "sell_stop": ((label.loc[d] if label is not None else -(f <= -thr + 1e-9).astype(float)).reindex(sells) == -1).mean(),
             "picks": ",".join(top)})
         prev = set(top)
         calib.append(t.assign(fwd=f.reindex(t.index)).dropna(subset=["fwd"])[[calib_col, "fwd"]])

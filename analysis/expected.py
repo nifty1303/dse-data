@@ -79,45 +79,49 @@ PHASE_TEXT = {
     "Late fall": "a fall that is running longer than usual",
     "Sideways": "no clear swing",
 }
-# The 1-month plan is a race: buy today, sell at +5% (target) or at -5% (stop),
-# whichever close comes first, or at the end of the month if neither.
-# Tags: Buy when the target is clearly more likely to come first; Sell when the stop is
-# more likely to come first (the price is more likely to fall 5% than rise 5%); else Neutral.
-BUY_EDGE = 0.10       # chance(target first) - chance(stop first) needed for a Buy
-BUY_TOP = 0.10        # ...and the share must be in the top 10% of shares by that edge today
+# The 1-month plan is a race: buy today, sell on the first close at +5% (the goal) or at
+# the share's own stop-loss (from its supports and volatility, see features.dynamic_stop),
+# or at the end of the month if neither comes.
 COST = 0.01           # round-trip brokerage and fees
 TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
+# Tag rules (tested on unseen days in analyze.py):
+BUY_LEAD = 0.10       # Buy: chance(+5% first) beats chance(stop first) by 10+ points
+BUY_TOP = 0.10        #      and among the top 10% of shares by expected result today
+SELL_BOTTOM = 0.10    # Sell: stop more likely first than +5% (more likely to fall),
+                      #       or among the bottom 10% of shares by expected result today
 
 
-def race(close, days, goal):
-    """Per day and share: +1 if +goal came first, -1 if -goal came first, 0 if neither; and the trade result."""
-    cv = close.values
+def race(close, days, goal, stop):
+    """Per day and share: +1 if +goal came first, -1 if the stop came first, 0 if neither; and the trade result."""
+    cv, sv = close.values, stop.values
     lab = np.full(cv.shape, np.nan)
     res = np.full(cv.shape, np.nan)
     for t in range(len(close) - days):
         path = cv[t + 1:t + days + 1] / cv[t] - 1
-        up, dn = path >= goal, path <= -goal
+        up, dn = path >= goal, path <= -sv[t]
         iu = np.where(up.any(0), up.argmax(0), days + 1)
         idn = np.where(dn.any(0), dn.argmax(0), days + 1)
         l = np.where(iu < idn, 1.0, np.where(idn < iu, -1.0, 0.0))
-        l[np.isnan(cv[t]) | np.isnan(path[-1])] = np.nan
+        l[np.isnan(cv[t]) | np.isnan(path[-1]) | np.isnan(sv[t])] = np.nan
         lab[t] = l
-        res[t] = np.where(l == 1, goal, np.where(l == -1, -goal, path[-1]))
+        res[t] = np.where(l == 1, goal, np.where(l == -1, -sv[t], path[-1]))
     return (pd.DataFrame(lab, index=close.index, columns=close.columns),
             pd.DataFrame(res, index=close.index, columns=close.columns))
 
 
-def race_tag(pt, ps, universe=None):
-    """Buy: edge >= BUY_EDGE and top BUY_TOP of shares (universe) by edge today. Sell: stop-first more likely."""
-    edge = pt - ps
-    ref = edge if universe is None else edge[edge.index.isin(universe)]
-    cut = ref.quantile(1 - BUY_TOP) if len(ref) else np.inf
-    return pd.Series(np.select([(edge >= BUY_EDGE) & (edge >= cut), ps > pt], ["Buy", "Sell"], "Neutral"), index=pt.index)
+def trade_value(pt, ps, goal, stop, flat_avg):
+    """Expected result of the trade after costs: +goal, -stop, or the usual month-end move."""
+    return goal * pt - stop * ps + flat_avg * (1 - pt - ps).clip(lower=0) - COST
 
 
-def trade_value(pt, ps, goal, flat_avg):
-    """Expected result of the +goal / -goal trade after costs."""
-    return goal * pt - goal * ps + flat_avg * (1 - pt - ps).clip(lower=0) - COST
+def race_tag(pt, ps, value, universe=None):
+    """Returns (tag, today's Buy bar, today's Sell bar) on expected result."""
+    ref = value if universe is None else value[value.index.isin(universe)]
+    buy_bar = float(ref.quantile(1 - BUY_TOP)) if len(ref) else np.inf
+    sell_bar = float(ref.quantile(SELL_BOTTOM)) if len(ref) else -np.inf
+    buy = (pt - ps >= BUY_LEAD) & (value >= buy_bar)
+    sell = (ps > pt) | (value <= sell_bar)
+    return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index), buy_bar, sell_bar
 
 
 def phase(leg_dir, progress, ret5):

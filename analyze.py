@@ -5,12 +5,13 @@ build the website data.
     python analyze.py                 # full run, writes site/data/
     python analyze.py --run prelim    # label the page as the 3 PM preliminary update
 
-The plan is a race: buy today, sell at +5% (target) or -5% (stop), whichever close comes
-first, or at the end of the month. For each share:
+The plan is a race: buy today, sell at +5% (target) or at the share's own stop-loss (from
+its supports and volatility), whichever close comes first, or at the end of the month. For each share:
 - calibrated chances that the target comes first / the stop comes first / neither
 - expected trade result after ~1% round-trip costs
-- tag: Buy when target-first beats stop-first by 10+ points; Sell when the stop is more
-  likely to come first (more likely to fall 5% than rise 5%); else Neutral
+- tag: Buy when target-first beats stop-first by 10+ points and the expected result is in
+  today's top 10%; Sell when the stop is more likely to come first, or the expected result
+  is in the bottom 10%; else Neutral
 - journey, trade plan (buy zone, target, stop, sell-by date) and projected range
 
 Everything is checked walk-forward on periods the model never saw, and today's scores
@@ -30,7 +31,7 @@ from analysis import backtest, expected as E, features, model, prep, report
 SITE_DATA = "site/data"
 SIGNALS_CSV = "data/signals.csv"
 SIGNAL_COLS = ["date", "symbol", "horizon", "buy", "sell", "move", "direction", "exp", "hit", "phase", "conf", "verdict", "rank"]
-BUCKETS = ([-9, -0.005, 0.005, 0.015, 9], ["Below −0.5%", "−0.5% to +0.5%", "+0.5% to +1.5%", "+1.5% or more"])
+BUCKETS = ([-9, -0.01, 0, 0.01, 9], ["Below −1%", "−1% to 0%", "0% to +1%", "+1% or more"])
 
 
 def log(msg, t0=[time.time()]):
@@ -45,16 +46,14 @@ def build_table(t, panel_day, goal, flat_avg):
     t = t.copy()
     p = panel_day.reindex(t.index)
     t["hit"], t["stop_p"] = t["buy"], t["sell"]
-    t["exp"] = E.trade_value(t["buy"], t["sell"], goal, flat_avg) + E.COST      # gross expected result
-    t["value"] = t["exp"] - E.COST
+    t["stop_dist"] = p["stop_dist"].fillna(0.08)
+    t["value"] = E.trade_value(t["buy"], t["sell"], goal, t["stop_dist"], flat_avg)
+    t["exp"] = t["value"] + E.COST                                               # gross expected result
     t["phase"] = E.phase(p["leg_dir"], p["leg_progress"], p["ret5"])
-    t["verdict"] = E.race_tag(t["buy"], t["sell"], SHARES)
-    cut = (t["buy"] - t["sell"])[t.index.isin(SHARES)].quantile(1 - E.BUY_TOP) if SHARES is not None else np.nan
-    t["buy_cut"] = max(float(cut), E.BUY_EDGE)
+    t["verdict"], t["buy_cut"], t["sell_cut"] = E.race_tag(t["buy"], t["sell"], t["value"], SHARES)
     t["tier"] = t["verdict"].map(E.TIER)
-    edge = t["buy"] - t["sell"]
-    t["rank_score"] = t["tier"] + edge + 1e-6 * t["conf"]
-    t["sell_score"] = (2 - t["tier"]) - edge + 1e-6 * t["conf"]
+    t["rank_score"] = t["tier"] + t["value"] * 10 + 1e-6 * t["conf"]
+    t["sell_score"] = (2 - t["tier"]) - t["value"] * 10 + (t["sell"] - t["buy"]) + 1e-6 * t["conf"]
     t["rank"] = t["rank_score"].rank(ascending=False, method="first").astype(int)
     return t
 
@@ -78,14 +77,14 @@ def tag_check(tables_all, lab, res, universe):
 
 
 def edge_deciles(tables_all, lab, res, universe):
-    """Every unseen day, shares split into 10 equal groups by edge (target-first minus stop-first chance)."""
-    d = pd.concat([t[["buy", "sell"]].assign(date=k) for k, t in tables_all.items()])
+    """Every unseen day, shares split into 10 equal groups by expected result after costs."""
+    d = pd.concat([t[["buy", "sell", "value"]].assign(date=k) for k, t in tables_all.items()])
     d = d.set_index("date", append=True).swaplevel()
     d.index.names = ["date", "symbol"]
     d["lab"], d["res"] = lab.reindex(d.index), res.reindex(d.index)
     d = d.dropna()
     d = d[d.index.get_level_values("symbol").isin(universe)]
-    d["edge"] = d["buy"] - d["sell"]
+    d["edge"] = d["value"]
     d["q"] = d.groupby(level="date")["edge"].transform(lambda x: np.floor(x.rank(pct=True, method="first") * 10 - 1e-9))
     rows = []
     for q, x in d.groupby("q"):
@@ -115,12 +114,13 @@ def main():
     global SHARES
     SHARES = shares
     btype, info = ex["btype"], m.info
-    lab_w, res_w = E.race(m.close, days, goal)
+    stop_w = ex["wide"]["stop_dist"]
+    lab_w, res_w = E.race(m.close, days, goal, stop_w)
     lab, res = lab_w.stack(future_stack=True).reindex(panel.index), res_w.stack(future_stack=True).reindex(panel.index)
     le, re_ = lab_w[equities].stack(), res_w[equities].stack()
     base_t, base_s = float((le == 1).mean()), float((le == -1).mean())
     flat_avg = float(re_[le == 0].mean())
-    log(f"race +/-{goal:.0%} over {days} sessions: target first {base_t:.0%}, stop first {base_s:.0%}, "
+    log(f"race +{goal:.0%} vs own stop (median {stop_w[equities].stack().median():.1%}) over {days} sessions: target first {base_t:.0%}, stop first {base_s:.0%}, "
         f"neither {1 - base_t - base_s:.0%} (avg {flat_avg:+.1%})")
 
     # ---- calibrated race odds, walk-forward (unseen) and live
@@ -138,11 +138,11 @@ def main():
     tables_all = {d: build_table(model.day_table(oos_c.xs(d, level="date"), panel.xs(d, level="date"), btype.loc[d], info),
                                  panel.xs(d, level="date"), goal, flat_avg) for d in oos_days}
     rebal = backtest.rebalance_dates(oos.index, m, days)
-    wk, calib, summary = backtest.run(m, ex, key, days, goal, {d: tables_all[d] for d in rebal}, "value", *BUCKETS, result=res_w)
+    wk, calib, summary = backtest.run(m, ex, key, days, goal, {d: tables_all[d] for d in rebal}, "value", *BUCKETS, result=res_w, label=lab_w)
     tcheck = tag_check(tables_all, lab, res, shares)
     deciles = edge_deciles(tables_all, lab, res, shares)
     for r in deciles:
-        log(f"  group {r['group']:2d}: edge {r['edge']:+.2f}, target {r['target']:.0%}, stop {r['stop']:.0%}, net {r['net']:+.2%}")
+        log(f"  group {r['group']:2d}: exp {r['edge']:+.2%}, target {r['target']:.0%}, stop {r['stop']:.0%}, net {r['net']:+.2%}")
     log(f"top20 race trades {summary['top20_total']:+.1%} after costs vs market {summary['market_total']:+.1%}, "
         f"all shares {summary['all_total']:+.1%} ({summary['periods']} months)")
     for r in tcheck:
@@ -168,7 +168,7 @@ def main():
     cal_live = E.calendar_tables(mk, days)
     today = m.dates[-1]
     extra = {
-        "goal": goal, "buy_edge": E.BUY_EDGE, "buy_top": E.BUY_TOP, "cost": E.COST, "base_target": base_t, "base_stop": base_s,
+        "goal": goal, "buy_lead": E.BUY_LEAD, "buy_top": E.BUY_TOP, "sell_bottom": E.SELL_BOTTOM, "cost": E.COST, "base_target": base_t, "base_stop": base_s,
         "flat_avg": flat_avg, "verdict_check": tcheck, "deciles": deciles,
         "sell_by": (pd.Timestamp(today) + pd.Timedelta(days=1) + pd.DateOffset(months=1)).strftime("%Y-%m-%d"),   # bought next session
         "phase_text": E.PHASE_TEXT,
@@ -181,7 +181,7 @@ def main():
     log(f"site data written to {args.out}")
     save_signals(tables, today)
     t = tables[key]
-    print(t.sort_values("rank_score", ascending=False).head(8)[["hit", "stop_p", "value", "phase", "verdict", "conf"]].round(3).to_string())
+    print(t.sort_values("rank_score", ascending=False).head(8)[["hit", "stop_p", "stop_dist", "value", "phase", "verdict", "conf"]].round(3).to_string())
     print(t["verdict"].value_counts().to_string())
 
 

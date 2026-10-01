@@ -302,7 +302,7 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 .rr { font-weight: 700; padding: 0 6px; border-radius: 99px; font-size: 11px; }
 .rr-good { background: var(--buy-wash); color: var(--buy-ink); }
 .rr-fair { background: var(--warn-bg); color: var(--warn-ink); }
-.rr-poor { background: var(--sell-wash); color: var(--sell-ink); }
+.rr-poor, .rr-wide { background: var(--sell-wash); color: var(--sell-ink); }
 .plan-card h3 { margin-bottom: 10px; }
 .plan-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .pl { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
@@ -331,3 +331,4 @@ footer { color: var(--muted); font-size: 12px; padding: 24px 0 40px; border-top:
 td.adv-good { color: var(--buy-ink); } td.adv-bad { color: var(--sell-ink); font-weight: 600; }
 .pick .top .star { margin-left: -4px; }
 .bs .bar .n { background: var(--neutral); opacity: .45; }
+.chg li { color: var(--ink-2, inherit); }

@@ -28,12 +28,13 @@ Run locally: `pip install -r requirements.txt && python analyze.py`, then `pytho
 
 ## The 1-month plan
 
-Buy today; sell on the first close 5% higher (goal) or 5% lower (stop), or after one month if neither happens.
-- **Buy**: chance of +5% first beats chance of −5% first by 10+ points, and the share is in today's top 10% by that edge.
-- **Sell**: −5% first is more likely than +5% first (the price is more likely to fall).
-- **Neutral**: everything else.
+Goal: +5% within a month. Buy today; sell on the first close at +5% (any day), or at the share's own stop-loss, or by the sell-by date one month later.
+- **Stop-loss per share**: just under the 20-day low (else the 3-month low) less half a normal day's move, if 3–12% below the price; otherwise the share's usual 2-week swing (4–12%).
+- **Buy** (all must hold): +5% first beats stop first by 10+ points, and the expected result after costs is in today's top 10%.
+- **Sell** (either one): the stop is more likely to come first, or the expected result is in today's bottom 10%.
+- **Neutral**: everything else. Each share gets a written rationale and a "what changed since the last session" list.
 
-On unseen days the top 10% reached +5% first ~51% of the time vs −5% first ~28% (≈ +0.2% per trade after ~1% costs); the bottom 10% was stopped out ~45% of the time. The edge is real but thin.
+On unseen days Buys reached +5% first ~51% of the time vs the stop ~29% (≈ +0.1% per trade after ~1% costs); Sells averaged about −1% after costs. The edge is real but thin.
 
 ## One-time setup for the website
 

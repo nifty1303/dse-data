@@ -5,8 +5,9 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
 
 | When (Dhaka) | Workflow | What it does |
 |---|---|---|
-| Sun–Thu 2:45 PM | Daily prices | Downloads today's prices, rebuilds the site (marked *preliminary*) |
-| Sun–Thu 4:00 PM | Daily prices | Re-checks the last 5 days, rebuilds the site (*final*) |
+| Sun–Thu 2:47 PM | Daily prices | Downloads today's prices, rebuilds the site (marked *preliminary*) |
+| Sun–Thu 4:07 PM | Daily prices | Re-checks the last 5 days, rebuilds the site (*final*) |
+| Sun–Thu 5:23 PM | Daily prices | Backup: same as 4:07 PM, in case GitHub skipped an earlier run |
 | Sat 10:00 PM | Weekly fundamentals | Refreshes every company page (category, holdings, dividends) |
 
 ## Files

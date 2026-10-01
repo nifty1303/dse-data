@@ -22,7 +22,7 @@ DATA_DIR = "data"
 PRICES_CSV = f"{DATA_DIR}/prices.csv"
 FUNDAMENTALS_CSV = f"{DATA_DIR}/fundamentals.csv"
 LOOKBACK_DAYS = 5
-MARKET_READY_TIME = "15:30"   # Dhaka time
+MARKET_CLOSE_TIME = "14:30"   # Dhaka time; after this, today's prices may be published
 PAUSE_SECONDS = 2
 
 # DSE's new site (since 2026-09-24) no longer has these pages; the legacy site does.
@@ -97,8 +97,10 @@ def merge_prices(prices, new, replace_range=False):
 def daily(lookback=LOOKBACK_DAYS):
     prices = load_csv(PRICES_CSV, PRICE_COLS)
     now = datetime.now(ZoneInfo("Asia/Dhaka"))
-    ready = now.strftime("%H:%M") >= MARKET_READY_TIME
-    end = now.date() if ready else now.date() - timedelta(days=1)
+    closed = now.strftime("%H:%M") >= MARKET_CLOSE_TIME
+    # Always ask up to today: if DSE hasn't published today yet it simply returns nothing for
+    # it, and later runs overwrite earlier (preliminary) rows for the same day.
+    end = now.date()
     start = end - timedelta(days=lookback)
 
     new = fetch_prices(start.isoformat(), end.isoformat())
@@ -109,9 +111,9 @@ def daily(lookback=LOOKBACK_DAYS):
     print(f"Checked {start} to {end}: {len(new):,} rows downloaded, {len(prices) - before:,} new")
     print("Latest trading day:", prices["date"].max())
     today = now.date().isoformat()
-    if ready and prices["date"].max() == today:
+    if prices["date"].max() == today:
         print(f"OK: today ({today}) included, {(prices['date'] == today).sum()} instruments")
-    elif ready:
+    elif closed:
         print(f"Note: today ({today}) not in the data (holiday, weekend, or not published yet)")
 
     if new.empty:

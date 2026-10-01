@@ -3,8 +3,10 @@ name: Daily prices
 on:
   schedule:
     # Times are in UTC (Dhaka = UTC + 6). Days 0-4 = Sunday to Thursday.
-    - cron: "45 8 * * 0-4"   # 2:45 PM Dhaka: today only, site marked preliminary (~3 PM)
-    - cron: "0 10 * * 0-4"   # 4:00 PM Dhaka: last 5 days, final site (~4:10 PM)
+    # Off the busy :00 / :15 / :30 / :45 minutes, where GitHub most often delays or drops runs.
+    - cron: "47 8 * * 0-4"   # 2:47 PM Dhaka: today only, site marked preliminary (~3 PM)
+    - cron: "7 10 * * 0-4"   # 4:07 PM Dhaka: last 5 days, final site (~4:15 PM)
+    - cron: "23 11 * * 0-4"  # 5:23 PM Dhaka: backup in case an earlier run was skipped
   workflow_dispatch:
     inputs:
       mode:
@@ -48,7 +50,7 @@ jobs:
 
       - name: Update prices
         run: |
-          if [ "${{ github.event.schedule }}" = "45 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
+          if [ "${{ github.event.schedule }}" = "47 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
             python update.py today
           elif [ "${{ inputs.mode }}" = "fix" ]; then
             python update.py fix ${{ inputs.fix_start }} ${{ inputs.fix_end }}
@@ -68,7 +70,7 @@ jobs:
       # Prices are already saved above, so a failure from here on never loses data.
       - name: Score shares and build site
         run: |
-          if [ "${{ github.event.schedule }}" = "45 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
+          if [ "${{ github.event.schedule }}" = "47 8 * * 0-4" ] || [ "${{ inputs.mode }}" = "today" ]; then
             python analyze.py --run prelim
           else
             python analyze.py --run final

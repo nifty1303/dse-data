@@ -180,9 +180,15 @@ def build(m):
     W["gap_down20"] = _sum((o / c.shift(1) - 1 < -0.05).astype(float), 20)
     W["stop_dist"], W["stop_basis"] = dynamic_stop(c, W["vol20"])
     W["stop_sig"] = (W["stop_dist"] / (W["vol20"] * np.sqrt(20)).replace(0, np.nan)).clip(0, 5)
+    # The share's usual price level: its 2-year average, unless it has moved to a new range
+    # (last year's average 30%+ away from the year before's), then last year's average.
     avg2y = c.rolling(RANGE_DAYS, min_periods=120).mean()
-    W["dev2y"] = (c / avg2y - 1).clip(-0.9, 3)
-    W["target_dist"], W["target_basis"] = dynamic_target(c, W["vol20"], {1: c.rolling(60, min_periods=20).max(), 2: avg2y, 3: p90_all})
+    avg1y = c.rolling(250, min_periods=120).mean()
+    shifted = ((avg1y / c.shift(250).rolling(250, min_periods=60).mean() - 1).abs() > 0.30)
+    fair = avg2y.where(~shifted, avg1y)
+    W["fair_shift"] = shifted.astype(float).where(c.notna())
+    W["dev2y"] = (c / fair - 1).clip(-0.9, 3)
+    W["target_dist"], W["target_basis"] = dynamic_target(c, W["vol20"], {1: c.rolling(60, min_periods=20).max(), 2: fair, 3: p90_all})
     W["target_stop"] = (W["target_dist"] / W["stop_dist"]).clip(0, 5)
 
     # ---- F. relative strength & market
@@ -292,7 +298,7 @@ def dynamic_stop(c, vol):
 
 
 GOAL_MIN, GOAL_MAX = 0.05, 0.15
-TARGET_BASIS = {0: "minimum goal", 1: "3-month high", 2: "2-year average", 3: "top of regular range"}
+TARGET_BASIS = {0: "minimum goal", 1: "3-month high", 2: "usual price level", 3: "top of regular range"}
 
 
 def dynamic_target(c, vol, levels):
@@ -440,5 +446,5 @@ FEATURES = [f for fs in ANGLES.values() for f in fs]
 # shares beat others. Backtests improved without it, so it drives the warning banner only.
 MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
 MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
-INFO_COLS = ["stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
+INFO_COLS = ["fair_shift", "stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

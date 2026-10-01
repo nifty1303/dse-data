@@ -85,13 +85,14 @@ PHASE_TEXT = {
 COST = 0.01           # round-trip brokerage and fees
 TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
 # Tag rules: fixed levels, no ranking against other shares (tested on unseen days in analyze.py).
-# lead = chance(take-profit first) - chance(stop first); dev2y = price vs its 2-year average.
+# lead = chance(take-profit first) - chance(stop first); dev2y = price vs its usual level
+# (2-year average, or last year's average when the share moved to a new price range).
 BUY_LEAD = 0.15       # Buy: lead of +15 points or more,
 JUNK_LEAD = 0.25      #      +25 for operator / junk shares (their odds are less reliable),
-BUY_MAX_DEV = 0.0     #      price below its 2-year average (cheap by its own history),
+BUY_MAX_DEV = 0.0     #      price below its usual level (cheap by its own history),
 NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way
-SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or above its 2-year average,
-                      #       or the price is 20%+ above its 2-year average without a +15 lead
+SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or above its usual level,
+                      #       or the price is 20%+ above its usual level without a +15 lead
 
 
 def race(close, days, goal, stop):

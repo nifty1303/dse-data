@@ -211,13 +211,17 @@ STOP_TEXT = {
 TARGET_TEXT = {
     0: "the minimum goal of +5%: no resistance sits between +5% and what it usually moves in a month",
     1: "just under its 3-month high (Tk {lvl:,.2f}), where sellers stepped in last time",
-    2: "just under its 2-year average (Tk {lvl:,.2f}), where shares below their average tend to drift back to",
+    2: "just under its usual price level (Tk {lvl:,.2f}), where shares below it tend to drift back to",
     3: "just under the top of its 2-year regular range (Tk {lvl:,.2f})",
 }
 
 
-def dev_text(dv, avg):
-    return (f"{dv:+.1%} vs its 2-year average (Tk {avg:,.2f}): "
+def fair_name(shift):
+    return "1-year average (it moved to a new price range in the last year)" if shift else "2-year average"
+
+
+def dev_text(dv, avg, shift=False):
+    return (f"{dv:+.1%} vs its usual price level, the {fair_name(shift)} (Tk {avg:,.2f}): "
             + ("well above its usual level, so more room to fall back." if dv > 0.20 else
                "above its usual level." if dv > 0.03 else
                "close to its usual level." if dv >= -0.03 else
@@ -236,28 +240,28 @@ def tag_reason(r, price, sell_by, basis, tbasis):
     buy = [{"ok": bool(lead >= need),
             "text": f"Take-profit first (Tk {up:,.2f}, +{td:.1%}) {pt:.0%} vs stop first (Tk {dn:,.2f}, −{sd:.1%}) {ps:.0%}: "
                     f"lead {lead * 100:+.0f} points (needs {need * 100:+.0f}" + (", higher for operator / junk shares" if junk else "") + ")"},
-           {"ok": bool(dv < 0), "text": f"Price is below its 2-year average ({dv:+.1%})"},
+           {"ok": bool(dv < 0), "text": f"Price is below its usual level ({dv:+.1%})"},
            {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Topping or Mid fall (it is {ph})"}]
     sell = [{"ok": bool(ps > pt and dv >= 0),
-             "text": f"Stop first is more likely than take-profit first ({ps:.0%} vs {pt:.0%}) while the price is at or above its 2-year average ({dv:+.1%})"},
+             "text": f"Stop first is more likely than take-profit first ({ps:.0%} vs {pt:.0%}) while the price is at or above its usual level ({dv:+.1%})"},
             {"ok": bool(dv > SELL_DEV and lead < BUY_LEAD),
-             "text": f"Price is more than {SELL_DEV:.0%} above its 2-year average ({dv:+.1%}) without a {BUY_LEAD * 100:+.0f} lead ({lead * 100:+.0f})"}]
+             "text": f"Price is more than {SELL_DEV:.0%} above its usual level ({dv:+.1%}) without a {BUY_LEAD * 100:+.0f} lead ({lead * 100:+.0f})"}]
     if r["verdict"] == "Sell":
         why = ("Sell: " + (f"it is more likely to fall to its stop (Tk {dn:,.2f}, −{sd:.1%}) than reach its take-profit (Tk {up:,.2f}) first "
-                           f"by {sell_by} ({ps:.0%} vs {pt:.0%}), and at {dv:+.1%} vs its 2-year average it isn't cheap enough to wait for a bounce."
+                           f"by {sell_by} ({ps:.0%} vs {pt:.0%}), and at {dv:+.1%} vs its usual price level it isn't cheap enough to wait for a bounce."
                            if ps > pt and dv >= 0 else
-                           f"it is {dv:+.0%} above its 2-year average and the odds don't support more upside (lead {lead * 100:+.0f}); "
+                           f"it is {dv:+.0%} above its usual price level and the odds don't support more upside (lead {lead * 100:+.0f}); "
                            "shares this stretched have tended to fall back."))
     elif r["verdict"] == "Buy":
         why = (f"Buy: {pt:.0%} chance of reaching its take-profit Tk {up:,.2f} (+{td:.1%}) before {sell_by} against {ps:.0%} of first falling to "
-               f"its stop Tk {dn:,.2f} (−{sd:.1%}), a lead of {lead * 100:.0f} points; it is {-dv:.1%} below its 2-year average, and the journey "
+               f"its stop Tk {dn:,.2f} (−{sd:.1%}), a lead of {lead * 100:.0f} points; it is {-dv:.1%} below its usual price level, and the journey "
                f"({ph}) allows a Buy.")
     else:
         miss = []
         if lead < need:
             miss.append(f"its lead of {lead * 100:+.0f} points is below {need * 100:+.0f}")
         if dv >= 0:
-            miss.append(f"it is {dv:+.1%} vs its 2-year average, so not cheap")
+            miss.append(f"it is {dv:+.1%} vs its usual price level, so not cheap")
         if ph in NO_BUY_PHASES:
             miss.append(f"it is {ph.lower()}" + (": the rise is tiring, wait for a pullback or a bottom" if ph == "Topping"
                                                   else ": the fall is still under way, wait for it to bottom out"))
@@ -352,7 +356,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         return {"price": close_raw[sym], "lo": bands["p10_all"][sym].iloc[-1], "hi": bands["p90_all"][sym].iloc[-1]}
 
     h_extra = next(iter(H.values()))["extra"]
-    dev2 = pt["dev2y"]                    # price vs its 2-year average (bonus-adjusted)
+    dev2 = pt["dev2y"]                    # price vs its usual level (bonus-adjusted)
     shares = info.index[info["is_equity"] & ~info["is_fund"]]
 
     def horizon_row(key, sym):
@@ -370,7 +374,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         rationale.append(journey(pt.loc[sym], r["phase"]))
         dv = float(dev2[sym]) if not pd.isna(dev2[sym]) else None
         if dv is not None:
-            rationale.append("Price " + dev_text(dv, price / (1 + dv)))
+            rationale.append("Price " + dev_text(dv, price / (1 + dv), bool(pt.at[sym, "fair_shift"] == 1)))
         changes = change_text(r, yday.loc[sym] if sym in yday.index else None)
         since, n_days = today, 0
         for d in reversed(recent):
@@ -408,7 +412,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "sym": sym, "sector": info.at[sym, "sector"], "cat": info.at[sym, "market_category"],
             "type": TYPE_LABEL.get(btype.at[today, sym], "Mixed"), "stage": STAGE_LABEL.get(stage.at[today, sym], "Quiet"),
             "close": _r(close_raw[sym], 2), "chg": _r(close_raw[sym] / prev_raw[sym] - 1, 4),
-            "dev2y": _r(dev2[sym], 4), "avg2y": _r(close_raw[sym] / (1 + dev2[sym]), 2) if not pd.isna(dev2[sym]) else None,
+            "dev2y": _r(dev2[sym], 4), "fair_basis": "1-year" if pt.at[sym, "fair_shift"] == 1 else "2-year", "avg2y": _r(close_raw[sym] / (1 + dev2[sym]), 2) if not pd.isna(dev2[sym]) else None,
             "band": _r(p["band_all"], 3), "swing": _r(p["band60"], 3),
             "up_room": _r(p["up_room"], 3), "down_risk": _r(p["down_risk"], 3),
             "leg": int(p["leg_dir"]) if not pd.isna(p["leg_dir"]) else 0,

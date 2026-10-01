@@ -208,71 +208,97 @@ STOP_TEXT = {
 }
 
 
-def tag_reason(r, price, goal, sell_by, rank_pct, basis):
-    """Rule checks behind the tag, a one-line verdict and the plan's rationale, all from the lead."""
-    from .expected import BUY_TOP, JUNK_LEAD, NO_BUY_PHASES
-    pt, ps, sd = float(r["hit"]), float(r["stop_p"]), float(r["stop_dist"])
-    up, dn = price * (1 + goal), price * (1 - sd)
-    lead, bar, junk, ph = pt - ps, float(r["buy_cut"]), bool(r["junk"]), r["phase"]
-    need = max(bar, JUNK_LEAD) if junk else bar
-    where = (f"top {max(1, round(100 * (1 - rank_pct)))}%" if rank_pct >= 0.5 else f"bottom {max(1, round(100 * rank_pct))}%")
+TARGET_TEXT = {
+    0: "the minimum goal of +5%: no resistance sits between +5% and what it usually moves in a month",
+    1: "just under its 3-month high (Tk {lvl:,.2f}), where sellers stepped in last time",
+    2: "just under its 2-year average (Tk {lvl:,.2f}), where shares below their average tend to drift back to",
+    3: "just under the top of its 2-year regular range (Tk {lvl:,.2f})",
+}
+
+
+def dev_text(dv, avg):
+    return (f"{dv:+.1%} vs its 2-year average (Tk {avg:,.2f}): "
+            + ("well above its usual level, so more room to fall back." if dv > 0.20 else
+               "above its usual level." if dv > 0.03 else
+               "close to its usual level." if dv >= -0.03 else
+               "below its usual level, cheap by its own history." if dv >= -0.15 else
+               "well below its usual level, cheap by its own history (but it may be cheap for a reason)."))
+
+
+def tag_reason(r, price, sell_by, basis, tbasis):
+    """Rule checks behind the tag, a one-line verdict and the plan's rationale."""
+    from .expected import BUY_LEAD, JUNK_LEAD, NO_BUY_PHASES, SELL_DEV
+    pt, ps, sd, td = float(r["hit"]), float(r["stop_p"]), float(r["stop_dist"]), float(r["target_dist"])
+    dv = float(r["dev2y"]) if not pd.isna(r["dev2y"]) else 0.0
+    up, dn = price * (1 + td), price * (1 - sd)
+    lead, junk, ph = pt - ps, bool(r["junk"]), r["phase"]
+    need = JUNK_LEAD if junk else BUY_LEAD
     buy = [{"ok": bool(lead >= need),
-            "text": f"+{goal:.0%} first (Tk {up:,.2f}) {pt:.0%} vs stop first (Tk {dn:,.2f}) {ps:.0%}: lead {lead * 100:+.0f} points; "
-                    f"needs {need * 100:+.0f} today (top {BUY_TOP:.0%} of shares, at least +10" + (f", +{JUNK_LEAD * 100:.0f} for operator / junk shares" if junk else "") +
-                    f"; this share is in the {where})"},
-           {"ok": bool(ph not in NO_BUY_PHASES),
-            "text": f"Journey is not Topping or Mid fall (it is {ph})"}]
-    sell = [{"ok": bool(ps > pt), "text": f"Stop first (Tk {dn:,.2f}, −{sd:.1%}) is more likely than +{goal:.0%} first: {ps:.0%} vs {pt:.0%}"}]
+            "text": f"Take-profit first (Tk {up:,.2f}, +{td:.1%}) {pt:.0%} vs stop first (Tk {dn:,.2f}, −{sd:.1%}) {ps:.0%}: "
+                    f"lead {lead * 100:+.0f} points (needs {need * 100:+.0f}" + (", higher for operator / junk shares" if junk else "") + ")"},
+           {"ok": bool(dv < 0), "text": f"Price is below its 2-year average ({dv:+.1%})"},
+           {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Topping or Mid fall (it is {ph})"}]
+    sell = [{"ok": bool(ps > pt and dv >= 0),
+             "text": f"Stop first is more likely than take-profit first ({ps:.0%} vs {pt:.0%}) while the price is at or above its 2-year average ({dv:+.1%})"},
+            {"ok": bool(dv > SELL_DEV and lead < BUY_LEAD),
+             "text": f"Price is more than {SELL_DEV:.0%} above its 2-year average ({dv:+.1%}) without a {BUY_LEAD * 100:+.0f} lead ({lead * 100:+.0f})"}]
     if r["verdict"] == "Sell":
-        why = (f"Sell: it is more likely to fall to its stop (Tk {dn:,.2f}, −{sd:.1%}) than to reach +{goal:.0%} (Tk {up:,.2f}) "
-               f"first by {sell_by}: {ps:.0%} vs {pt:.0%}.")
+        why = ("Sell: " + (f"it is more likely to fall to its stop (Tk {dn:,.2f}, −{sd:.1%}) than reach its take-profit (Tk {up:,.2f}) first "
+                           f"by {sell_by} ({ps:.0%} vs {pt:.0%}), and at {dv:+.1%} vs its 2-year average it isn't cheap enough to wait for a bounce."
+                           if ps > pt and dv >= 0 else
+                           f"it is {dv:+.0%} above its 2-year average and the odds don't support more upside (lead {lead * 100:+.0f}); "
+                           "shares this stretched have tended to fall back."))
     elif r["verdict"] == "Buy":
-        why = (f"Buy: {pt:.0%} chance of reaching +{goal:.0%} (Tk {up:,.2f}) before {sell_by} against {ps:.0%} of first falling to its "
-               f"stop (Tk {dn:,.2f}, −{sd:.1%}). A lead of {lead * 100:.0f} points, in the {where} of shares today, and the journey ({ph}) allows a Buy.")
+        why = (f"Buy: {pt:.0%} chance of reaching its take-profit Tk {up:,.2f} (+{td:.1%}) before {sell_by} against {ps:.0%} of first falling to "
+               f"its stop Tk {dn:,.2f} (−{sd:.1%}), a lead of {lead * 100:.0f} points; it is {-dv:.1%} below its 2-year average, and the journey "
+               f"({ph}) allows a Buy.")
     else:
         miss = []
         if lead < need:
-            miss.append(f"its lead of {lead * 100:+.0f} points is below today's Buy bar of {need * 100:+.0f}")
+            miss.append(f"its lead of {lead * 100:+.0f} points is below {need * 100:+.0f}")
+        if dv >= 0:
+            miss.append(f"it is {dv:+.1%} vs its 2-year average, so not cheap")
         if ph in NO_BUY_PHASES:
-            miss.append(f"it is {ph.lower()}" + (": the rise is tiring, so wait for a pullback or a bottom" if ph == "Topping"
-                                                  else ": the fall is still under way, so wait for it to bottom out"))
+            miss.append(f"it is {ph.lower()}" + (": the rise is tiring, wait for a pullback or a bottom" if ph == "Topping"
+                                                  else ": the fall is still under way, wait for it to bottom out"))
         why = "Neutral: " + ("; ".join(miss) + "." if miss else "no clear edge.")
-    rr = goal / sd
-    be = sd / (goal + sd)
-    rat = [f"Odds by {sell_by}: +{goal:.0%} first {pt:.0%}, stop first {ps:.0%}, neither {max(0.0, 1 - pt - ps):.0%}.",
+    rr = td / sd
+    be = sd / (td + sd)
+    rat = [f"Odds by {sell_by}: take-profit first {pt:.0%}, stop first {ps:.0%}, neither {max(0.0, 1 - pt - ps):.0%}.",
+           f"Take-profit Tk {up:,.2f} (+{td:.1%}): " + tbasis + ".",
            f"Stop-loss Tk {dn:,.2f} (−{sd:.1%}): " + basis + ".",
-           f"Reward : risk is {rr:.1f} : 1 (+{goal:.0%} vs −{sd:.1%}); before costs you break even if +{goal:.0%} comes first "
-           f"in more than {be:.0%} of the decided trades, and this share's odds give {pt / max(pt + ps, 1e-9):.0%}."]
+           f"Reward : risk is {rr:.1f} : 1; before costs you break even if the take-profit comes first in more than {be:.0%} "
+           f"of the decided trades, and this share's odds give {pt / max(pt + ps, 1e-9):.0%}."]
     return buy, sell, why, rat
 
 
-def change_text(r, y, price, goal):
+def change_text(r, y):
     """What changed in the plan since the previous session."""
     if y is None:
         return ["New in the analysis today."]
     out = []
     if y["verdict"] != r["verdict"]:
         out.append(f"Tag changed {y['verdict']} → {r['verdict']}.")
-    d_hit, d_stop = r["hit"] - y["hit"], r["stop_p"] - y["stop_p"]
-    if abs(d_hit) >= 0.02 or abs(d_stop) >= 0.02:
-        out.append(f"+{goal:.0%}-first chance {y['hit']:.0%} → {r['hit']:.0%}, stop-first {y['stop_p']:.0%} → {r['stop_p']:.0%}.")
+    if abs(r["hit"] - y["hit"]) >= 0.02 or abs(r["stop_p"] - y["stop_p"]) >= 0.02:
+        out.append(f"Take-profit-first chance {y['hit']:.0%} → {r['hit']:.0%}, stop-first {y['stop_p']:.0%} → {r['stop_p']:.0%}.")
+    if abs(r["target_dist"] - y["target_dist"]) >= 0.005:
+        out.append(f"Take-profit {y['target_dist']:+.1%} → {r['target_dist']:+.1%}.")
     if abs(r["stop_dist"] - y["stop_dist"]) >= 0.005:
         out.append(f"Stop distance {y['stop_dist']:.1%} → {r['stop_dist']:.1%}.")
     return out or ["No meaningful change since the previous session."]
 
 
-def trade_plan(p, price, r, liq, goal, days, sell_by, basis):
-    """1-month plan: buy zone, +goal take-profit, the share's own stop, sell-by date."""
+def trade_plan(p, price, r, liq, days, sell_by, basis, tbasis):
+    """1-month plan: buy zone, the share's own take-profit and stop, sell-by date."""
     sd = float(np.clip(p["vol20"] if not pd.isna(p["vol20"]) else 0.02, 0.005, 0.08))
-    dist = float(r["stop_dist"])
-    stop = price * (1 - dist)
+    dist, td = float(r["stop_dist"]), float(r["target_dist"])
+    stop, tp = price * (1 - dist), price * (1 + td)
     entry_hi = price * (1 + min(0.5 * sd, 0.01))
     entry_lo = max(stop * 1.03, price * (1 - sd))
-    tp = price * (1 + goal)
-    rr = goal / max(dist, 1e-9)
+    rr = td / max(dist, 1e-9)
     return {"entry_lo": _r(entry_lo, 2), "entry_hi": _r(entry_hi, 2), "stop": _r(stop, 2), "stop_basis": basis,
-            "take_profit": _r(tp, 2), "rr": _r(rr, 2), "risk_pct": _r(dist, 4),
-            "reward_pct": _r(goal, 4), "liq": _r(liq, 2), "sell_by": sell_by,
+            "take_profit": _r(tp, 2), "tp_basis": tbasis, "rr": _r(rr, 2), "risk_pct": _r(dist, 4),
+            "reward_pct": _r(td, 4), "liq": _r(liq, 2), "sell_by": sell_by,
             "rr_label": "Good" if rr >= 1.2 else "Fair" if rr >= 0.7 else "Wide stop", "hold_days": days}
 
 
@@ -326,8 +352,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         return {"price": close_raw[sym], "lo": bands["p10_all"][sym].iloc[-1], "hi": bands["p90_all"][sym].iloc[-1]}
 
     h_extra = next(iter(H.values()))["extra"]
-    last2y = m.close.iloc[-500:]
-    dev2 = (m.close.iloc[-1] / last2y.mean() - 1).where(last2y.notna().sum() >= 120)        # vs 2-year average (bonus-adjusted)
+    dev2 = pt["dev2y"]                    # price vs its 2-year average (bonus-adjusted)
     shares = info.index[info["is_equity"] & ~info["is_fund"]]
 
     def horizon_row(key, sym):
@@ -336,22 +361,17 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
         why, caution = reasons(pt.loc[sym], per[key]["contrib"].loc[sym], ctx(sym), key)
         goal, sell_by = h_extra["goal"], pd.Timestamp(h_extra["sell_by"]).strftime("%d %b %Y").lstrip("0")
         price = float(close_raw[sym])
-        sv = t.loc[t.index.isin(shares), "lead"]
-        rank_pct = float((sv < r["lead"]).mean())
         code = int(pt.at[sym, "stop_basis"]) if not pd.isna(pt.at[sym, "stop_basis"]) else 2
         vd = float(np.clip(pt.at[sym, "vol20"] if not pd.isna(pt.at[sym, "vol20"]) else 0.02, 0.005, 0.08))
         basis = STOP_TEXT[code].format(lvl=price * (1 - float(r["stop_dist"])) / (1 - 0.5 * vd))
-        rule_buy, rule_sell, tag_why, rationale = tag_reason(r, price, goal, sell_by, rank_pct, basis)
+        tcode = int(pt.at[sym, "target_basis"]) if not pd.isna(pt.at[sym, "target_basis"]) else 0
+        tbasis = TARGET_TEXT[tcode].format(lvl=price * (1 + float(r["target_dist"])) / 0.99)
+        rule_buy, rule_sell, tag_why, rationale = tag_reason(r, price, sell_by, basis, tbasis)
         rationale.append(journey(pt.loc[sym], r["phase"]))
         dv = float(dev2[sym]) if not pd.isna(dev2[sym]) else None
         if dv is not None:
-            rationale.append(f"Price vs its 2-year average (Tk {price / (1 + dv):,.2f}): {dv:+.1%} — "
-                             + ("well above its usual level, so more room to fall back." if dv > 0.15 else
-                                "above its usual level." if dv > 0.03 else
-                                "close to its usual level." if dv >= -0.03 else
-                                "below its usual level." if dv >= -0.15 else
-                                "well below its usual level, cheap by its own history (but it may be cheap for a reason)."))
-        changes = change_text(r, yday.loc[sym] if sym in yday.index else None, price, goal)
+            rationale.append("Price " + dev_text(dv, price / (1 + dv)))
+        changes = change_text(r, yday.loc[sym] if sym in yday.index else None)
         since, n_days = today, 0
         for d in reversed(recent):
             tb = per[key]["tables"][d]
@@ -360,14 +380,14 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             else:
                 break
         liq = math.expm1(pt.at[sym, "liq_value"]) if not pd.isna(pt.at[sym, "liq_value"]) else 0.0
-        plan = trade_plan(pt.loc[sym], price, r, liq, goal, HORIZONS[key]["days"], sell_by, basis)
+        plan = trade_plan(pt.loc[sym], price, r, liq, HORIZONS[key]["days"], sell_by, basis, tbasis)
         rationale.append(f"It trades about Tk {liq:,.1f} mn a day, so " + ("getting in and out is easy." if liq >= 5 else
                          "keep the position modest: exits can be slow." if liq >= 0.5 else
                          "it is thinly traded: a stop-loss may fill well below its level."))
         return {"buy": _r(r["buy"], 3), "sell": _r(r["sell"], 3), "move": _r(r["move"], 3),
                 "dir": _r(r["direction"], 3), "exp": _r(r["exp"], 4) if "exp" in t else None,
                 "hit": _r(r["hit"], 3), "stop_p": _r(r["stop_p"], 3), "lead": _r(r["lead"], 3),
-                "stop_dist": _r(r["stop_dist"], 4), "rationale": rationale, "changes": changes,
+                "stop_dist": _r(r["stop_dist"], 4), "target_dist": _r(r["target_dist"], 4), "rationale": rationale, "changes": changes,
                 "phase": r["phase"], "journey": journey(pt.loc[sym], r["phase"]),
                 "target": _r(close_raw[sym] * (1 + r["exp"]), 2),
                 "path_lo": _r(close_raw[sym] * (1 + r["path_lo"]), 2) if "path_lo" in t else None,

@@ -1,4 +1,4 @@
-// DSE Signals front end: one plan, the next month (buy now, sell at +5%, at the share's own stop, or on the sell-by date).
+// DSE Signals front end: one plan, the next month (buy now, sell at the share's own take-profit (+5% or more), at its own stop, or on the sell-by date).
 // Reads data/summary.json, data/track.json and data/stocks/<SYM>.json.
 (function () {
   const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 125, side: "buy", sector: "", phase: "" };
@@ -83,7 +83,7 @@
     return h("span", { class: "verdict v-" + v.toLowerCase().replace(/ /g, "-") }, v);
   }
   function bs(o, big) {
-    const t = o.hit ?? 0, st = o.stop_p ?? 0, n = Math.max(0, 1 - t - st), g = pct(GOAL(), 0);
+    const t = o.hit ?? 0, st = o.stop_p ?? 0, n = Math.max(0, 1 - t - st), g = pct(o.target_dist ?? GOAL(), 1);
     return h("div", { class: "bs" + (big ? " big" : ""), role: "img", "aria-label": `+${g} first ${pct(t)}, neither ${pct(n)}, stop first ${pct(st)}` },
       h("div", { class: "bar" }, h("span", { class: "b", style: `width:${t * 100}%` }), h("span", { class: "n", style: `width:${n * 100}%` }),
         h("span", { class: "s", style: `width:${st * 100}%` })),
@@ -96,7 +96,7 @@
       frac == null ? null : h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(1, frac)) * 100}%` })));
   }
   const moveStat = o => stat("lead", `${((o.hit - o.stop_p) * 100).toFixed(0)} pts`, Math.max(0, Math.min(1, 0.5 + (o.hit - o.stop_p))),
-    "Chance of +5% first minus chance of the stop first. Buy needs a lead in today's top 10% (at least +10; +20 for junk shares)");
+    "Chance of the take-profit first minus chance of the stop first. Buy needs +15 or more (+25 for junk shares), a price below the 2-year average and a journey other than Topping / Mid fall");
   const devText = r => r.dev2y == null ? null : h("div", { class: "small" }, `Price Tk ${num(r.close)} is `,
     h("b", { class: r.dev2y >= 0 ? "up" : "down" }, spct(r.dev2y)), ` vs its 2-year average (Tk ${num(r.avg2y)})`);
   const confStat = o => stat("confidence", o.conf, o.conf / 100, "How far to trust this: history, liquidity, cycle regularity, clarity");
@@ -104,7 +104,7 @@
     const p = o.plan;
     return h("div", { class: "expbox odds" },
       h("div", { class: "oddrow" },
-        h("div", null, h("b", { class: "up" }, pct(o.hit)), h("span", null, ` reach +5% (Tk ${num(p.take_profit)}) by ${SELLBY()}`)),
+        h("div", null, h("b", { class: "up" }, pct(o.hit)), h("span", null, ` reach take-profit Tk ${num(p.take_profit)} (${spct(p.reward_pct)}) by ${SELLBY()}`)),
         h("div", null, h("b", { class: "down" }, pct(o.stop_p)), h("span", null, ` hit stop first (Tk ${num(p.stop)}, ${spct(-p.risk_pct)})`))),
       r ? devText(r) : null);
   }
@@ -112,9 +112,9 @@
     sub ? h("small", { class: cls || "" }, sub) : null);
   function planLine(r) {
     const o = r.s, p = o.plan;
-    if (o.verdict === "Sell") return h("div", { class: "plan sellplan small" }, h("b", null, "Plan: "), `avoid buying; if you hold it, consider selling (more likely to drop to Tk ${num(p.stop)}, ${spct(-p.risk_pct)}, than give +5%).`);
+    if (o.verdict === "Sell") return h("div", { class: "plan sellplan small" }, h("b", null, "Plan: "), `avoid buying; if you hold it, consider selling (more likely to drop to Tk ${num(p.stop)}, ${spct(-p.risk_pct)}, than reach Tk ${num(p.take_profit)}).`);
     return h("div", { class: "plan small" }, h("b", null, "Plan: "),
-      `buy Tk ${num(p.entry_lo)}–${num(p.entry_hi)} · take profit Tk ${num(p.take_profit)} (+5%) as soon as it closes there · stop Tk ${num(p.stop)} (${spct(-p.risk_pct)}) · else sell by ${p.sell_by}`);
+      `buy Tk ${num(p.entry_lo)}–${num(p.entry_hi)} · take profit Tk ${num(p.take_profit)} (${spct(p.reward_pct)}) as soon as it closes there · stop Tk ${num(p.stop)} (${spct(-p.risk_pct)}) · else sell by ${p.sell_by}`);
   }
   function planCard(r) {
     const o = r.s, p = o.plan;
@@ -138,7 +138,7 @@
         pl("Stop-loss", `Tk ${num(p.stop)}`, spct(-p.risk_pct), "down"),
         pl("Reward : risk", `${num(p.rr, 1)} : 1`, p.rr_label, "rr rr-" + p.rr_label.split(" ")[0].toLowerCase()),
         pl("Sell by", p.sell_by, "latest exit")),
-      h("p", { class: "small" }, h("b", null, "Rules: "), `sell as soon as a close reaches Tk ${num(p.take_profit)} (+5%), any day, no need to wait for the month end. ` +
+      h("p", { class: "small" }, h("b", null, "Rules: "), `sell as soon as a close reaches Tk ${num(p.take_profit)} (${spct(p.reward_pct)}; ${p.tp_basis}), any day, no need to wait for the month end. ` +
         `Exit if a close falls to Tk ${num(p.stop)} or lower. If neither happens, sell by ${p.sell_by}.`),
       rationaleBlock(o),
       h("div", { class: "sizer" },
@@ -168,7 +168,7 @@
         checks.map(c => h("div", { class: "check " + (c.ok ? "ok" : "no") }, h("span", { class: "mark", "aria-hidden": "true" }, c.ok ? "✓" : "✗"), h("span", null, (c.ok ? "" : "Not met: ") + c.text))))),
       h("div", { class: "small" }, o.tag_days >= 60 ? `Tagged ${o.verdict} for 60+ trading days.`
         : `Tagged ${o.verdict} for ${o.tag_days} trading day${o.tag_days === 1 ? "" : "s"} (since ${Charts.fmtDate(o.tag_since)}).`),
-      vc ? h("div", { class: "small muted" }, `Track record: on unseen days, shares tagged ${o.verdict} reached +5% first ${pct(vc.target)} of the time and hit their stop first ${pct(vc.stop)} ` +
+      vc ? h("div", { class: "small muted" }, `Track record: on unseen days, shares tagged ${o.verdict} reached their take-profit first ${pct(vc.target)} of the time and hit their stop first ${pct(vc.stop)} ` +
         `(average trade ${spct(vc.net, 2)} after costs).`) : null,
       o.why.length ? [h("h4", null, "What supports it"), h("ul", { class: "why" }, o.why.map(x => h("li", null, x)))] : null,
       o.caution.length ? [h("h4", null, "What argues against"), h("ul", { class: "caution" }, o.caution.map(x => h("li", null, x)))] : null);
@@ -183,7 +183,7 @@
     const last = r.spark[r.spark.length - 1];
     const p = o.plan;
     const pr = last != null ? { steps: 20, from: last, mid: last, lo: last * (1 - p.risk_pct), hi: last * (1 + p.reward_pct), color } : null;
-    return h("div", { class: "pathbox", title: "Last 40 sessions, then the plan's take-profit (+5%) and stop levels over the next month" },
+    return h("div", { class: "pathbox", title: "Last 40 sessions, then the plan's take-profit and stop levels over the next month" },
       Charts.sparkPath(r.spark, pr));
   }
   function gauge(r) {
@@ -259,7 +259,7 @@
   function miniRow(r) {
     const o = r.s;
     return h("div", { class: "mini", onclick: () => go(r.sym) },
-      h("div", null, h("span", { class: "sym" }, r.sym), " ", h("span", { class: "muted small" }, `${num(r.close)} · +5% ${pct(o.hit)} / stop ${pct(o.stop_p)} · ${o.phase}`)),
+      h("div", null, h("span", { class: "sym" }, r.sym), " ", h("span", { class: "muted small" }, `${num(r.close)} · TP ${pct(o.hit)} / stop ${pct(o.stop_p)} · ${o.phase}`)),
       badge(o.verdict), bs(o));
   }
 
@@ -299,8 +299,8 @@
     const sideBtn = (v, label) => h("button", { class: side === v ? "on" : "", onclick: () => { S.side = v; route(); } }, label);
     const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
     const sub = side === "sell"
-      ? `Sell = more likely to fall to its own stop-loss than reach +5% first before ${SELLBY()}. Worst first.`
-      : `Buy = the biggest leads today (chance of +5% first minus chance of the stop first, top 10%, at least +10 points), and not Topping or in a Mid fall.`;
+      ? `Sell = more likely to hit its stop than its take-profit while not cheap, or stretched 20%+ above its 2-year average without upside odds. Worst first.`
+      : `Buy = take-profit first beats stop first by 15+ points, the price is below its 2-year average, and the share is not Topping or in a Mid fall.`;
     const showExtras = side === "buy" && !sector && !phase;
     const wrongSide = list.filter(r => r.s.verdict !== (side === "buy" ? "Buy" : "Sell")).length;
     return h("div", null,
@@ -338,7 +338,7 @@
     return h("div", null,
       moodBanner(S.summary.mood),
       h("h1", null, "By sector"),
-      h("p", { class: "sub" }, `Top 5 to buy and top 5 to sell in every sector for the 1-month plan (until ${SELLBY()}). Sectors are ordered by their average lead (+5% chance minus stop chance).`),
+      h("p", { class: "sub" }, `Top 5 to buy and top 5 to sell in every sector for the 1-month plan (until ${SELLBY()}). Sectors are ordered by their average lead (take-profit chance minus stop chance).`),
       h("div", { class: "grid two" }, secs.map(([name, v]) => h("div", { class: "card" },
         h("h3", { style: "display:flex;justify-content:space-between;gap:8px" }, h("span", null, name),
           h("span", { class: "small muted num" }, `${v.count} listed · avg lead ${(v.avg_exp * 100).toFixed(0)} pts · last 4 wks ${spct(v.ret20)}`)),
@@ -354,7 +354,8 @@
     ["chg", "Day", r => spct(r.chg), r => r.chg, "r"],
     ["rank", "Verdict", r => badge(r.s.verdict), r => r.s.rank],
     ["lead", "Lead", r => `${(r.s.lead * 100).toFixed(0)}`, r => r.s.lead, "r"],
-    ["hit", "+5% first", r => pct(r.s.hit), r => r.s.hit, "r g"],
+    ["target_dist", "Take-profit", r => spct(r.s.target_dist), r => r.s.target_dist, "r"],
+    ["hit", "TP first", r => pct(r.s.hit), r => r.s.hit, "r g"],
     ["stop_p", "Stop first", r => pct(r.s.stop_p), r => r.s.stop_p, "r rd"],
     ["stop_dist", "Stop", r => spct(-r.s.stop_dist), r => r.s.stop_dist, "r"],
     ["dev2y", "vs 2-yr avg", r => spct(r.dev2y), r => r.dev2y, "r"],
@@ -371,7 +372,7 @@
         h("div", { class: "num", style: "display:flex;align-items:center;gap:8px" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)), starBtn(r.sym))),
       h("div", { class: "qgrid" },
         h("div", null, bs(o),
-          h("div", { class: "mv" }, h("b", null, `+5% ${pct(o.hit)} · stop ${pct(o.stop_p)}`), ` · ${spct(r.dev2y)} vs 2-yr avg`,
+          h("div", { class: "mv" }, h("b", null, `TP ${spct(o.target_dist)} ${pct(o.hit)} · stop ${pct(o.stop_p)}`), ` · ${spct(r.dev2y)} vs 2-yr avg`,
             ` · ${o.phase} · Confidence ${o.conf}`),
           h("div", { class: "tagwhy small" }, o.tag_why), planLine(r)),
         pathChart(r)));
@@ -435,14 +436,14 @@
     const vsIdx = s.top20_total - s.market_total, vsAll = s.top20_total - s.all_total;
     const out = h("div", null,
       h("h1", null, "Track record"),
-      h("p", { class: "sub" }, `Every month the Top 20 is bought in equal amounts and each share is sold at +5% or at its own stop-loss (first close to reach either) or after 20 trading days, paying 0.5% brokerage each way on the part of the list that changes. All shares and the Sell list are traded the same way. ` +
+      h("p", { class: "sub" }, `Every month the Top 20 is bought in equal amounts and each share is sold at its own take-profit (+5% or more) or its own stop-loss (first close to reach either) or after 20 trading days, paying 0.5% brokerage each way on the part of the list that changes. All shares and the Sell list are traded the same way. ` +
         `The model is retrained monthly on data available at the time, so these ${s.periods} periods (${Charts.fmtDate(s.start)} – ${Charts.fmtDate(s.end)}) are results it never saw while learning.`),
       h("div", { class: "grid tiles" },
         tile("Top 20 portfolio", spct(s.top20_total), "after costs, compounded", s.top20_total >= 0 ? "up" : "down"),
         tile("Market index", spct(s.market_total), "cap-weighted"),
         tile("All shares, same plan", spct(s.all_total), "buy everything"),
         tile("Months beating the index", pct(s.beat_market), `${s.periods} one-month periods`),
-        tile("Picks that reached +5%", pct(s.avg_target_rate), "average per month"),
+        tile("Picks that hit take-profit", pct(s.avg_target_rate), "average per month"),
         tile("Picks stopped out", pct(s.avg_stop_rate), `Sell list: ${pct(s.avg_sell_stop)}`)),
       h("h2", null, "Growth of Tk 100"),
       h("div", { class: "legend" },
@@ -457,9 +458,9 @@
         `Only ${s.periods} months could be tested, so this curve is noisy; the table below uses every unseen day and is the fairer test. ` +
         "Treat the scores as odds, not certainties: the edge is real but thin after costs."),
       h("h2", null, "Does a bigger edge really win more often?"),
-      h("p", { class: "sub" }, "Every unseen day, shares split into 10 equal groups by lead (chance of +5% first minus chance of the stop first), against what really happened with the plan (+5% / own stop / 1 month)."),
+      h("p", { class: "sub" }, "Every unseen day, shares split into 10 equal groups by lead (chance of the take-profit first minus chance of the stop first), against what really happened with the plan (own take-profit / own stop / 1 month)."),
       h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Group", "Cases", "Avg lead", "+5% first", "Stop first", "Avg trade", "After ~1% costs"]
+        h("thead", null, h("tr", null, ["Group", "Cases", "Avg lead", "TP first", "Stop first", "Avg trade", "After ~1% costs"]
           .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
         h("tbody", null, (x.deciles || []).map(g => h("tr", { style: "cursor:default" },
           h("td", null, g.group === 10 ? "10 (best, ≈ Buy)" : g.group === 1 ? "1 (worst, Sell)" : String(g.group)), h("td", { class: "r" }, g.n.toLocaleString()),
@@ -468,20 +469,20 @@
       h("h2", null, "Does a bigger lead come true?"),
       h("p", { class: "sub" }, "Unseen predictions at the monthly buy dates, grouped by lead, against the real trade result (before costs)."),
       h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Lead", "Cases", "Avg lead", "Actual avg", "Actual median", "+5% first", "Lost 5%+"]
+        h("thead", null, h("tr", null, ["Lead", "Cases", "Avg lead", "Actual avg", "Actual median", "Gained 5%+", "Lost 5%+"]
           .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
         h("tbody", null, t.calibration.map(c => h("tr", { style: "cursor:default" }, h("td", null, c.bucket), h("td", { class: "r" }, (c.n || 0).toLocaleString()),
           h("td", { class: "r" }, `${(c.predicted * 100).toFixed(0)} pts`), h("td", { class: "r" }, spct(c.avg_return)), h("td", { class: "r" }, spct(c.median_return)),
           h("td", { class: "r g" }, pct(c.rose)), h("td", { class: "r rd" }, pct(c.fell))))))),
       h("h2", null, "Does each verdict come true?"),
-      h("p", { class: "sub" }, "Every unseen day and share, grouped by the verdict it had, against what happened with the plan (+5% / own stop / 1 month)."),
+      h("p", { class: "sub" }, "Every unseen day and share, grouped by the verdict it had, against what happened with the plan (own take-profit / own stop / 1 month)."),
       h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Verdict", "Share of cases", "+5% first", "Stop first", "Neither", "Avg trade", "After ~1% costs"]
+        h("thead", null, h("tr", null, ["Verdict", "Share of cases", "TP first", "Stop first", "Neither", "Avg trade", "After ~1% costs"]
           .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
         h("tbody", null, x.verdict_check.map(v => h("tr", { style: "cursor:default" }, h("td", null, badge(v.verdict)),
           h("td", { class: "r" }, pct(v.share)), h("td", { class: "r g" }, pct(v.target)), h("td", { class: "r rd" }, pct(v.stop)),
           h("td", { class: "r" }, pct(v.neither)), h("td", { class: "r" }, spct(v.gross, 2)), h("td", { class: "r " + (v.net >= 0 ? "up" : "down") }, spct(v.net, 2))))))),
-      h("p", { class: "small muted", style: "margin-top:6px" }, `For comparison, a random share reaches +5% first ${pct(x.base_target)} of the time and its stop first ${pct(x.base_stop)}.`),
+      h("p", { class: "small muted", style: "margin-top:6px" }, `For comparison, a random share reaches its take-profit first ${pct(x.base_target)} of the time and its stop first ${pct(x.base_stop)}.`),
       h("h2", null, "Calendar patterns in the data"),
       h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h3", null, "1-month return of the average share, by month"),
@@ -495,7 +496,7 @@
           h("div", { class: "small muted", style: "margin-top:6px" }, "Same day = average share's move that session. Next month = average share's return over the 20 sessions after buying that day."))),
       h("h2", null, "Latest periods"),
       h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Start", "Top 20", "Index", "All shares", "Picks at +5%", "Picks"].map((c, i) => h("th", { class: i && i < 5 ? "r" : "" }, c)))),
+        h("thead", null, h("tr", null, ["Start", "Top 20", "Index", "All shares", "Picks at TP", "Picks"].map((c, i) => h("th", { class: i && i < 5 ? "r" : "" }, c)))),
         h("tbody", null, t.periods.slice(-12).reverse().map(w => h("tr", { style: "cursor:default" }, h("td", null, Charts.fmtDate(w.date)),
           h("td", { class: "r " + (w.top20 >= 0 ? "up" : "down") }, spct(w.top20)), h("td", { class: "r" }, spct(w.market)),
           h("td", { class: "r" }, spct(w.all)), h("td", { class: "r" }, pct(w.target)),
@@ -518,30 +519,31 @@
       h("h1", null, "How the scores work"),
       p("Everything here comes only from DSE prices, volumes and trades plus the weekly company snapshot. No news, no opinions."),
       h("h2", null, "The plan"),
-      p("Your goal: +5% within the next month. Buy today (or at the next session) and sell on the first close at +5%, any day it happens. Each share gets its own stop-loss from its chart. If neither level is reached, sell by the sell-by date one month later."),
-      h("h2", null, "The stop-loss: set per share"),
+      p("Your goal: at least +5% within the next month. Buy today (or at the next session) and sell on the first close at the share's take-profit, any day it happens, or at its own stop-loss. If neither is reached, sell by the sell-by date one month later."),
+      h("h2", null, "Take-profit: set per share, never below +5%"),
+      h("ul", null,
+        h("li", null, "Just under the nearest resistance above the price: its 3-month high, its 2-year average, or the top of its 2-year regular range."),
+        h("li", null, "Used only if it is at least 5% away and within what the share usually moves in a month (1.2 × daily swing × √20, at most 15%). Otherwise the take-profit is the +5% minimum.")),
+      h("h2", null, "Stop-loss: set per share"),
       h("ul", null,
         h("li", null, h("b", null, "Support first: "), "just under the lowest close of the last 20 sessions, less half a normal day's move as a buffer, if that is between max(3%, 1.2 normal days) and 12% below the price."),
         h("li", null, h("b", null, "Then the 3-month low: "), "the same rule using the lowest close of the last 3 months."),
-        h("li", null, h("b", null, "Otherwise volatility: "), "the share's usual 2-week swing, kept between 4% and 12%."),
-        h("li", null, "Calm shares get tight stops and wild shares get wide ones, so normal daily noise doesn't stop you out. The median stop is about 7%.")),
+        h("li", null, h("b", null, "Otherwise volatility: "), "the share's usual 2-week swing, kept between 4% and 12%.")),
       h("h2", null, "How the verdict is decided"),
       h("ul", null,
-        h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the stop distance itself) estimates the chance that +5% comes first, that the stop comes first, or neither."),
-        h("li", null, h("b", null, "Lead: "), "chance of +5% first minus chance of the stop first, in points. The tag comes from this alone, plus the journey check."),
-        h("li", null, h("b", null, "Buy (all must hold): "), "a lead in the top 10% of shares today and at least +10 points (at least +20 for operator / junk shares, whose odds are less reliable), AND the share is not Topping or in a Mid fall."),
-        h("li", null, h("b", null, "Why no Buy while Topping or in a Mid fall: "), "on unseen days, high-lead shares in those phases hit their stop more often and did worse, so the rise is treated as tiring or the fall as still under way. Wait for a pullback or a bottom."),
-        h("li", null, h("b", null, "Sell: "), "the stop is more likely to come first than +5% (the price is more likely to fall)."),
+        h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs 2-year average, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
+        h("li", null, h("b", null, "Lead: "), "chance of the take-profit first minus chance of the stop first, in points."),
+        h("li", null, h("b", null, "Buy (all must hold): "), "lead of +15 points or more (+25 for operator / junk shares); price below its 2-year average; journey not Topping or Mid fall. These are fixed levels: a share isn't compared with other shares."),
+        h("li", null, h("b", null, "Sell (either one): "), "the stop is more likely to come first than the take-profit while the price is at or above its 2-year average; or the price is more than 20% above its 2-year average without a +15 lead."),
         h("li", null, h("b", null, "Neutral: "), "everything else. Each share's page lists every condition it met or missed, the reasoning behind its plan, and what changed since the previous session."),
-        h("li", null, h("b", null, "Vs 2-year average: "), "how far today's price is above or below the share's average close over the last 2 years (adjusted for bonus shares). It tells you whether the share is expensive or cheap by its own history, whatever its current swing."),
-        h("li", null, h("b", null, "Honest check: "), "on unseen days, Buys reached +5% first about 57% of the time and hit their stop first about 18% (a random share: about 43% and 29%). After ~1% costs that is roughly break-even per trade, because the rest end the month slightly down. Sells reached +5% first only 40% of the time and lost about 0.8% per trade after costs."),
+        h("li", null, h("b", null, "Why the 2-year average matters: "), "on unseen days, shares with a +15 lead that were below their 2-year average did much better (about +0.9% per trade before costs) than those above it (about +0.2%), and shares 20%+ above their average lost about 1.3% per trade after costs."),
+        h("li", null, h("b", null, "Honest check: "), "on unseen days, Buys reached their take-profit first about 49% of the time and hit their stop first about 19% (a random share: about 38% and 30%), roughly break-even after ~1% costs. Sells hit their stop first 31% of the time and lost about 0.8% per trade after costs."),
         h("li", null, h("b", null, "Confidence (0–100): "), "history, liquidity, cycle regularity and how clear-cut the odds are. Junk shares are scaled down by a quarter, dead ones by half."),
-        h("li", null, h("b", null, "Ranking: "), "Buys first, then Neutral, each ordered by expected result; at most 4 per sector when showing all sectors.")),
+        h("li", null, h("b", null, "Ranking: "), "Buys first, then Neutral, each ordered by lead; at most 4 per sector when showing all sectors.")),
       h("h2", null, "Trade plans"),
       h("ul", null,
         h("li", null, h("b", null, "Buy zone: "), "from about one normal day's move below today's price to half a day's move above it. Buying above the zone is chasing."),
-        h("li", null, h("b", null, "Take profit: "), "+5% from the buy price, sold the first day a close gets there."),
-        h("li", null, h("b", null, "Reward : risk: "), "5% ÷ stop distance. With a 7% stop you need +5% to come first in more than 58% of decided trades to break even; each plan shows this share's number."),
+        h("li", null, h("b", null, "Reward : risk: "), "take-profit distance ÷ stop distance. Each plan shows the win rate needed to break even next to this share's odds."),
         h("li", null, h("b", null, "Position size: "), "shares so that hitting the stop costs your chosen % of capital (default 1%), capped at 15% of capital per share and 10% of its daily turnover.")),
       h("h2", null, "My stocks"),
       p("Star any share to watch it, and add what you own with your buy price. After each update the My stocks page lists tag changes, watched Buys inside their buy zone, and holdings near their stop-loss or tagged Sell. It is saved only in your browser; use Export / Import to back it up or move it."),
@@ -593,7 +595,7 @@
         h("div", { style: "text-align:right" }, h("div", { class: "price num" }, num(d.close)), h("div", { class: d.chg >= 0 ? "up" : "down" }, spct(d.chg) + " today"))),
       h("div", { class: "grid two" },
         h("div", { class: "card decision" },
-          h("div", { class: "dh" }, h("div", null, h("h3", null, `Next month · until ${SELLBY()}`), h("div", { class: "small muted" }, `Goal +5% · stop ${spct(-o.stop_dist)} · up to 20 trading days`)), badge(o.verdict)),
+          h("div", { class: "dh" }, h("div", null, h("h3", null, `Next month · until ${SELLBY()}`), h("div", { class: "small muted" }, `Take-profit ${spct(o.target_dist)} · stop ${spct(-o.stop_dist)} · up to 20 trading days`)), badge(o.verdict)),
           expBlock(o, d),
           h("div", null, phaseChip(o)), h("div", { class: "journey" }, o.journey),
           bs(o, true),
@@ -609,7 +611,7 @@
         h("span", null, h("i", { style: `background:${css("--muted")}` }), "Outlier low / high (2 yrs)"),
         h("span", null, h("i", { class: "dot", style: `background:${css("--buy")}` }), "Swing low"),
         h("span", null, h("i", { class: "dot", style: `background:${css("--sell")}` }), "Swing high"),
-        h("span", null, h("i", { class: "area", style: `background:${o.verdict === "Sell" ? css("--sell") : css("--buy")};opacity:.3` }), "Plan: +5% take profit and stop-loss until " + SELLBY())),
+        h("span", null, h("i", { class: "area", style: `background:${o.verdict === "Sell" ? css("--sell") : css("--buy")};opacity:.3` }), "Plan: take-profit and stop-loss until " + SELLBY())),
       h("div", { class: "card" }, priceBox, h("div", { class: "small muted", style: "margin-top:10px" }, "Volume (green = up day, red = down day)"), volBox),
       h("div", { class: "grid two", style: "margin-top:12px" },
         h("div", { class: "card" }, h("h3", null, "The cycle"), kv([
@@ -625,7 +627,7 @@
           ["Completed swings / regularity", `${m.n_legs ?? "–"} / ${m.regularity != null ? pct(m.regularity) : "–"}`],
         ])),
         h("div", { class: "card" }, h("h3", null, "How the outlook changed"),
-          h("div", { class: "small muted", style: "margin-bottom:4px" }, "Lead (+5% chance minus stop chance, points) over the last 3 months"),
+          h("div", { class: "small muted", style: "margin-bottom:4px" }, "Lead (take-profit chance minus stop chance, points) over the last 3 months"),
           histBox,
           h("div", { class: "chips small", style: "margin-top:6px" }, (() => {
             const hv = d.history.short, out = [];
@@ -687,7 +689,7 @@
         markers,
         projection: { steps: 20, from: s.close[n - 1], mid: s.close[n - 1],
           lo: s.close[n - 1] * (1 - o.plan.risk_pct), hi: s.close[n - 1] * (1 + o.plan.reward_pct),
-          color: o.verdict === "Sell" ? css("--sell") : css("--buy"), label: SELLBY(), text: `+5% Tk ${num(o.plan.take_profit)}` },
+          color: o.verdict === "Sell" ? css("--sell") : css("--buy"), label: SELLBY(), text: `TP Tk ${num(o.plan.take_profit)}` },
       });
       const cl = s.close;
       Charts.columns(volBox, {
@@ -711,12 +713,12 @@
   }
   function holdingAdvice(hd, r) {
     const o = r.s, p = o.plan, pnl = r.close / hd.price - 1;
-    const tp = hd.price * (1 + GOAL()), sl = p.stop;
-    if (pnl >= GOAL()) return ["good", `Up ${spct(pnl)}: your +5% goal is reached (Tk ${num(tp)}). Take profit`];
+    const tp = Math.max(hd.price * (1 + GOAL()), p.take_profit), sl = p.stop;
+    if (r.close >= tp) return ["good", `Up ${spct(pnl)}: take-profit reached (Tk ${num(tp)}). Sell`];
     if (r.close <= sl * 1.01) return ["bad", `At or near its stop-loss (Tk ${num(sl)}). Exit`];
-    if (o.verdict === "Sell") return ["bad", `Sell: more likely to fall to its stop (Tk ${num(sl)}) than rise 5% first (${pct(o.stop_p)} vs ${pct(o.hit)})`];
-    if (o.verdict === "Buy") return ["good", `Hold: still a Buy. Take profit at Tk ${num(tp)} (+5% on your price), stop Tk ${num(sl)}`];
-    return ["info", `Hold: Neutral. Take profit at Tk ${num(tp)} (+5% on your price), stop Tk ${num(sl)}`];
+    if (o.verdict === "Sell") return ["bad", `Sell: more likely to fall to its stop (Tk ${num(sl)}) than reach its take-profit first (${pct(o.stop_p)} vs ${pct(o.hit)})`];
+    if (o.verdict === "Buy") return ["good", `Hold: still a Buy. Take profit at Tk ${num(tp)}, stop Tk ${num(sl)}`];
+    return ["info", `Hold: Neutral. Take profit at Tk ${num(tp)} (at least +5% on your price), stop Tk ${num(sl)}`];
   }
   function changes() {
     const asof = S.summary.asof;
@@ -798,7 +800,7 @@
         })))) : h("div", { class: "empty small" }, "No holdings yet."),
       h("h2", null, `Watchlist (${watch.length})`),
       watch.length ? h("div", { class: "tbl-wrap" }, h("table", null,
-        h("thead", null, h("tr", null, ["Share", "Price", "Tag", "+5% / stop", "Journey", "Plan", "Since you added", ""].map((c, i) => h("th", { class: i === 1 || i === 3 ? "r" : "" }, c)))),
+        h("thead", null, h("tr", null, ["Share", "Price", "Tag", "TP / stop odds", "Journey", "Plan", "Since you added", ""].map((c, i) => h("th", { class: i === 1 || i === 3 ? "r" : "" }, c)))),
         h("tbody", null, watch.map(([sym, w]) => {
           const r = S.bySym[sym], o = r.s, p = o.plan;
           return h("tr", { onclick: () => go(sym) }, h("td", null, h("b", null, sym)), h("td", { class: "r" }, num(r.close)),

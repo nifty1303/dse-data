@@ -84,28 +84,30 @@ PHASE_TEXT = {
 # or at the end of the month if neither comes.
 COST = 0.01           # round-trip brokerage and fees
 TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
-# Tag rules, all on the lead = chance(+5% first) - chance(stop first) (tested on unseen days in analyze.py):
-BUY_LEAD = 0.10       # Buy: lead of 10+ points,
-BUY_TOP = 0.10        #      among the top 10% of shares by lead today,
-JUNK_LEAD = 0.20      #      20+ points for operator / junk shares (their odds are less reliable),
+# Tag rules: fixed levels, no ranking against other shares (tested on unseen days in analyze.py).
+# lead = chance(take-profit first) - chance(stop first); dev2y = price vs its 2-year average.
+BUY_LEAD = 0.15       # Buy: lead of +15 points or more,
+JUNK_LEAD = 0.25      #      +25 for operator / junk shares (their odds are less reliable),
+BUY_MAX_DEV = 0.0     #      price below its 2-year average (cheap by its own history),
 NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way
-# Sell: the stop is more likely to come first than +5% (the price is more likely to fall)
+SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or above its 2-year average,
+                      #       or the price is 20%+ above its 2-year average without a +15 lead
 
 
 def race(close, days, goal, stop):
-    """Per day and share: +1 if +goal came first, -1 if the stop came first, 0 if neither; and the trade result."""
-    cv, sv = close.values, stop.values
+    """Per day and share: +1 if its take-profit came first, -1 if its stop came first, 0 if neither; and the trade result."""
+    cv, sv, gv = close.values, stop.values, goal.values
     lab = np.full(cv.shape, np.nan)
     res = np.full(cv.shape, np.nan)
     for t in range(len(close) - days):
         path = cv[t + 1:t + days + 1] / cv[t] - 1
-        up, dn = path >= goal, path <= -sv[t]
+        up, dn = path >= gv[t], path <= -sv[t]
         iu = np.where(up.any(0), up.argmax(0), days + 1)
         idn = np.where(dn.any(0), dn.argmax(0), days + 1)
         l = np.where(iu < idn, 1.0, np.where(idn < iu, -1.0, 0.0))
-        l[np.isnan(cv[t]) | np.isnan(path[-1]) | np.isnan(sv[t])] = np.nan
+        l[np.isnan(cv[t]) | np.isnan(path[-1]) | np.isnan(sv[t]) | np.isnan(gv[t])] = np.nan
         lab[t] = l
-        res[t] = np.where(l == 1, goal, np.where(l == -1, -sv[t], path[-1]))
+        res[t] = np.where(l == 1, gv[t], np.where(l == -1, -sv[t], path[-1]))
     return (pd.DataFrame(lab, index=close.index, columns=close.columns),
             pd.DataFrame(res, index=close.index, columns=close.columns))
 
@@ -115,15 +117,12 @@ def trade_value(pt, ps, goal, stop, flat_avg):
     return goal * pt - stop * ps + flat_avg * (1 - pt - ps).clip(lower=0) - COST
 
 
-def race_tag(pt, ps, phase, junk, universe=None):
-    """Returns (tag, today's Buy bar on the lead)."""
+def race_tag(pt, ps, phase, junk, dev2y):
     lead = pt - ps
-    ref = lead if universe is None else lead[lead.index.isin(universe)]
-    bar = max(float(ref.quantile(1 - BUY_TOP)) if len(ref) else np.inf, BUY_LEAD)
-    need = np.where(junk, np.maximum(bar, JUNK_LEAD), bar)
-    buy = (lead >= need) & ~phase.isin(NO_BUY_PHASES)
-    sell = ps > pt
-    return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index), bar
+    need = np.where(junk, JUNK_LEAD, BUY_LEAD)
+    buy = (lead >= need) & (dev2y < BUY_MAX_DEV) & ~phase.isin(NO_BUY_PHASES)
+    sell = ((ps > pt) & (dev2y >= 0)) | ((dev2y > SELL_DEV) & (lead < BUY_LEAD))
+    return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index)
 
 
 def phase(leg_dir, progress, ret5):

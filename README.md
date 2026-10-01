@@ -28,14 +28,15 @@ Run locally: `pip install -r requirements.txt && python analyze.py`, then `pytho
 
 ## The 1-month plan
 
-Goal: +5% within a month. Buy today; sell on the first close at +5% (any day), or at the share's own stop-loss, or by the sell-by date one month later.
+Goal: at least +5% within a month. Buy today; sell on the first close at the share's take-profit (any day), or at its stop-loss, or by the sell-by date one month later.
+- **Take-profit per share** (never below +5%): just under the nearest resistance (3-month high, 2-year average, or top of the 2-year regular range) if it is 5%+ away and within the share's usual monthly move (max 15%); otherwise +5%.
 - **Stop-loss per share**: just under the 20-day low (else the 3-month low) less half a normal day's move, if 3–12% below the price; otherwise the share's usual 2-week swing (4–12%).
-- **Lead** = chance of +5% first − chance of the stop first. Tags come from the lead alone, plus a journey check.
-- **Buy** (all must hold): lead in today's top 10% and at least +10 points (+20 for operator / junk shares), and the share is not Topping or in a Mid fall.
-- **Sell**: the stop is more likely to come first than +5%.
+- **Lead** = chance of take-profit first − chance of stop first.
+- **Buy** (all must hold, fixed levels, no ranking against other shares): lead of +15 or more (+25 for operator / junk shares), price below its 2-year average, and not Topping or in a Mid fall.
+- **Sell** (either one): the stop is more likely first while the price is at or above its 2-year average, or the price is 20%+ above its 2-year average without a +15 lead.
 - **Neutral**: everything else. Each share gets a written rationale, its price vs its 2-year average, and a "what changed since the last session" list.
 
-On unseen days Buys reached +5% first ~57% of the time vs the stop ~18% (a random share: ~43% / ~29%); after ~1% costs that is about break-even per trade. Sells reached +5% first only ~40% and lost ~0.8% per trade after costs.
+On unseen days Buys reached their take-profit first ~49% of the time vs the stop ~19% (a random share: ~38% / ~30%), about break-even after ~1% costs; Sells lost ~0.8% per trade after costs.
 
 ## One-time setup for the website
 

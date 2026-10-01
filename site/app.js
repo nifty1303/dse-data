@@ -96,9 +96,10 @@
       frac == null ? null : h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(1, frac)) * 100}%` })));
   }
   const moveStat = o => stat("lead", `${((o.hit - o.stop_p) * 100).toFixed(0)} pts`, Math.max(0, Math.min(1, 0.5 + (o.hit - o.stop_p))),
-    "Chance of the take-profit first minus chance of the stop first. Buy needs +15 or more (+25 for junk shares), a price below the 2-year average and a journey other than Topping / Mid fall");
+    "Chance of the take-profit first minus chance of the stop first. Buy needs +15 or more (+25 for junk shares), a price below its usual level and a journey other than Topping / Mid fall");
   const devText = r => r.dev2y == null ? null : h("div", { class: "small" }, `Price Tk ${num(r.close)} is `,
-    h("b", { class: r.dev2y >= 0 ? "up" : "down" }, spct(r.dev2y)), ` vs its 2-year average (Tk ${num(r.avg2y)})`);
+    h("b", { class: r.dev2y >= 0 ? "up" : "down" }, spct(r.dev2y)), ` vs its usual price level, the ${r.fair_basis || "2-year"} average (Tk ${num(r.avg2y)})`,
+    r.fair_basis === "1-year" ? h("span", { class: "muted" }, " · it moved to a new price range in the last year, so the 2-year average would mislead") : null);
   const confStat = o => stat("confidence", o.conf, o.conf / 100, "How far to trust this: history, liquidity, cycle regularity, clarity");
   function expBlock(o, r) {
     const p = o.plan;
@@ -299,8 +300,8 @@
     const sideBtn = (v, label) => h("button", { class: side === v ? "on" : "", onclick: () => { S.side = v; route(); } }, label);
     const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
     const sub = side === "sell"
-      ? `Sell = more likely to hit its stop than its take-profit while not cheap, or stretched 20%+ above its 2-year average without upside odds. Worst first.`
-      : `Buy = take-profit first beats stop first by 15+ points, the price is below its 2-year average, and the share is not Topping or in a Mid fall.`;
+      ? `Sell = more likely to hit its stop than its take-profit while not cheap, or stretched 20%+ above its usual price level without upside odds. Worst first.`
+      : `Buy = take-profit first beats stop first by 15+ points, the price is below its usual level, and the share is not Topping or in a Mid fall.`;
     const showExtras = side === "buy" && !sector && !phase;
     const wrongSide = list.filter(r => r.s.verdict !== (side === "buy" ? "Buy" : "Sell")).length;
     return h("div", null,
@@ -358,7 +359,7 @@
     ["hit", "TP first", r => pct(r.s.hit), r => r.s.hit, "r g"],
     ["stop_p", "Stop first", r => pct(r.s.stop_p), r => r.s.stop_p, "r rd"],
     ["stop_dist", "Stop", r => spct(-r.s.stop_dist), r => r.s.stop_dist, "r"],
-    ["dev2y", "vs 2-yr avg", r => spct(r.dev2y), r => r.dev2y, "r"],
+    ["dev2y", "vs usual level", r => spct(r.dev2y), r => r.dev2y, "r"],
     ["phase", "Journey", r => r.s.phase, r => r.s.phase],
     ["conf", "Confidence", r => r.s.conf, r => r.s.conf, "r"],
     ["band", "2-yr range", r => pct(r.band), r => r.band, "r"],
@@ -372,7 +373,7 @@
         h("div", { class: "num", style: "display:flex;align-items:center;gap:8px" }, h("b", null, num(r.close)), h("span", { class: "small " + (r.chg >= 0 ? "up" : "down") }, spct(r.chg)), starBtn(r.sym))),
       h("div", { class: "qgrid" },
         h("div", null, bs(o),
-          h("div", { class: "mv" }, h("b", null, `TP ${spct(o.target_dist)} ${pct(o.hit)} · stop ${pct(o.stop_p)}`), ` · ${spct(r.dev2y)} vs 2-yr avg`,
+          h("div", { class: "mv" }, h("b", null, `TP ${spct(o.target_dist)} ${pct(o.hit)} · stop ${pct(o.stop_p)}`), ` · ${spct(r.dev2y)} vs usual level`,
             ` · ${o.phase} · Confidence ${o.conf}`),
           h("div", { class: "tagwhy small" }, o.tag_why), planLine(r)),
         pathChart(r)));
@@ -522,7 +523,7 @@
       p("Your goal: at least +5% within the next month. Buy today (or at the next session) and sell on the first close at the share's take-profit, any day it happens, or at its own stop-loss. If neither is reached, sell by the sell-by date one month later."),
       h("h2", null, "Take-profit: set per share, never below +5%"),
       h("ul", null,
-        h("li", null, "Just under the nearest resistance above the price: its 3-month high, its 2-year average, or the top of its 2-year regular range."),
+        h("li", null, "Just under the nearest resistance above the price: its 3-month high, its usual price level, or the top of its 2-year regular range."),
         h("li", null, "Used only if it is at least 5% away and within what the share usually moves in a month (1.2 × daily swing × √20, at most 15%). Otherwise the take-profit is the +5% minimum.")),
       h("h2", null, "Stop-loss: set per share"),
       h("ul", null,
@@ -531,12 +532,13 @@
         h("li", null, h("b", null, "Otherwise volatility: "), "the share's usual 2-week swing, kept between 4% and 12%.")),
       h("h2", null, "How the verdict is decided"),
       h("ul", null,
-        h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs 2-year average, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
+        h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs its usual level, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
         h("li", null, h("b", null, "Lead: "), "chance of the take-profit first minus chance of the stop first, in points."),
-        h("li", null, h("b", null, "Buy (all must hold): "), "lead of +15 points or more (+25 for operator / junk shares); price below its 2-year average; journey not Topping or Mid fall. These are fixed levels: a share isn't compared with other shares."),
-        h("li", null, h("b", null, "Sell (either one): "), "the stop is more likely to come first than the take-profit while the price is at or above its 2-year average; or the price is more than 20% above its 2-year average without a +15 lead."),
+        h("li", null, h("b", null, "Buy (all must hold): "), "lead of +15 points or more (+25 for operator / junk shares); price below its usual level; journey not Topping or Mid fall. These are fixed levels: a share isn't compared with other shares."),
+        h("li", null, h("b", null, "Sell (either one): "), "the stop is more likely to come first than the take-profit while the price is at or above its usual level; or the price is more than 20% above its usual level without a +15 lead."),
         h("li", null, h("b", null, "Neutral: "), "everything else. Each share's page lists every condition it met or missed, the reasoning behind its plan, and what changed since the previous session."),
-        h("li", null, h("b", null, "Why the 2-year average matters: "), "on unseen days, shares with a +15 lead that were below their 2-year average did much better (about +0.9% per trade before costs) than those above it (about +0.2%), and shares 20%+ above their average lost about 1.3% per trade after costs."),
+        h("li", null, h("b", null, "Usual price level: "), "the share's 2-year average, unless the share has moved to a new price range (last year's average 30%+ away from the year before's, like PENINSULA going from about Tk 11 to Tk 20–25). Then the old range would mislead, so last year's average is used."),
+        h("li", null, h("b", null, "Why it matters: "), "on unseen days, shares with a +15 lead that were below their usual level did much better (about +0.9% per trade before costs) than those above it (about +0.2%), and shares 20%+ above their usual level lost about 1.3% per trade after costs."),
         h("li", null, h("b", null, "Honest check: "), "on unseen days, Buys reached their take-profit first about 49% of the time and hit their stop first about 19% (a random share: about 38% and 30%), roughly break-even after ~1% costs. Sells hit their stop first 31% of the time and lost about 0.8% per trade after costs."),
         h("li", null, h("b", null, "Confidence (0–100): "), "history, liquidity, cycle regularity and how clear-cut the odds are. Junk shares are scaled down by a quarter, dead ones by half."),
         h("li", null, h("b", null, "Ranking: "), "Buys first, then Neutral, each ordered by lead; at most 4 per sector when showing all sectors.")),

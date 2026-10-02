@@ -178,6 +178,11 @@ def build(m):
     W["lc_hits20"] = _sum((ret <= -0.095).astype(float), 20)
     W["drawdown120"] = (c / max120 - 1).clip(-1, 0)
     W["gap_down20"] = _sum((o / c.shift(1) - 1 < -0.05).astype(float), 20)
+    # How far the day's high usually reaches above yesterday's close (a resting take-profit
+    # order fills there even if the share closes lower), and how often it gets +5% intraday.
+    reach = (h / c.shift(1) - 1).where(m.traded).clip(0, 0.15)
+    W["reach20"] = _mean(reach.fillna(0), 20)
+    W["reach5_hits20"] = _sum((reach >= 0.05).astype(float), 20)
     W["stop_dist"], W["stop_basis"] = dynamic_stop(c, W["vol20"])
     W["stop_sig"] = (W["stop_dist"] / (W["vol20"] * np.sqrt(20)).replace(0, np.nan)).clip(0, 5)
     # The share's usual price level: its 2-year average, unless it has moved to a new range
@@ -429,7 +434,7 @@ ANGLES = {
                          "rsi", "higher_low"],
     "Money flow": ["vol_ratio5", "vol_ratio20", "updown_vol", "trade_size", "close_loc", "pv_diverge"],
     "Liquidity": ["liq_value", "zero_days"],
-    "Risk": ["vol20", "vol60", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20", "stop_dist", "stop_sig",
+    "Risk": ["vol20", "vol60", "reach20", "reach5_hits20", "uc_hits20", "lc_hits20", "drawdown120", "gap_down20", "stop_dist", "stop_sig",
              "target_dist", "target_stop"],
     "Relative strength": ["rel_mkt5", "rel_mkt20", "rel_sec5", "rel_sec20", "sec_ret20"],
     "Market mood": ["mkt_ret5", "mkt_ret20", "breadth", "adv_dec5", "turnover_trend", "mood"],

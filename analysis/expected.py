@@ -79,9 +79,9 @@ PHASE_TEXT = {
     "Late fall": "a fall that is running longer than usual",
     "Sideways": "no clear swing",
 }
-# The 1-month plan is a race: buy today, sell on the first close at +5% (the goal) or at
-# the share's own stop-loss (from its supports and volatility, see features.dynamic_stop),
-# or at the end of the month if neither comes.
+# The 1-month plan is a race: buy today, sell when the day's high reaches the take-profit (a resting
+# sell order) or on the first close at the share's own stop-loss (from its supports and volatility,
+# see features.dynamic_stop), or at the end of the month if neither comes.
 COST = 0.01           # round-trip brokerage and fees
 TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
 # Tag rules: fixed levels, no ranking against other shares (tested on unseen days in analyze.py).
@@ -95,17 +95,24 @@ SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or ab
                       #       or the price is 20%+ above its usual level without a +15 lead
 
 
-def race(close, days, goal, stop):
-    """Per day and share: +1 if its take-profit came first, -1 if its stop came first, 0 if neither; and the trade result."""
+def race(close, days, goal, stop, high=None):
+    """Per day and share: +1 if its take-profit came first, -1 if its stop came first, 0 if neither; and the trade result.
+
+    The take-profit is a resting sell order, so it counts as reached when the day's high gets
+    there (sold at the take-profit even if the share closes lower). The stop is checked on the
+    close. When both happen on the same day the take-profit filled first, during the session.
+    """
     cv, sv, gv = close.values, stop.values, goal.values
+    hv = cv if high is None else high.reindex_like(close).values
     lab = np.full(cv.shape, np.nan)
     res = np.full(cv.shape, np.nan)
     for t in range(len(close) - days):
         path = cv[t + 1:t + days + 1] / cv[t] - 1
-        up, dn = path >= gv[t], path <= -sv[t]
+        up, dn = hv[t + 1:t + days + 1] / cv[t] - 1 >= gv[t], path <= -sv[t]
         iu = np.where(up.any(0), up.argmax(0), days + 1)
         idn = np.where(dn.any(0), dn.argmax(0), days + 1)
-        l = np.where(iu < idn, 1.0, np.where(idn < iu, -1.0, 0.0))
+        l = np.where(iu <= idn, 1.0, -1.0)
+        l[(iu > days) & (idn > days)] = 0.0
         l[np.isnan(cv[t]) | np.isnan(path[-1]) | np.isnan(sv[t]) | np.isnan(gv[t])] = np.nan
         lab[t] = l
         res[t] = np.where(l == 1, gv[t], np.where(l == -1, -sv[t], path[-1]))

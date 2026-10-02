@@ -139,7 +139,7 @@
         pl("Stop-loss", `Tk ${num(p.stop)}`, spct(-p.risk_pct), "down"),
         pl("Reward : risk", `${num(p.rr, 1)} : 1`, p.rr_label, "rr rr-" + p.rr_label.split(" ")[0].toLowerCase()),
         pl("Sell by", p.sell_by, "latest exit")),
-      h("p", { class: "small" }, h("b", null, "Rules: "), `sell as soon as a close reaches Tk ${num(p.take_profit)} (${spct(p.reward_pct)}; ${p.tp_basis}), any day, no need to wait for the month end. ` +
+      h("p", { class: "small" }, h("b", null, "Rules: "), `place a sell order at Tk ${num(p.take_profit)} (${spct(p.reward_pct)}; ${p.tp_basis}); it fills as soon as the day's high reaches it, any day, no need to wait for the month end. ` +
         `Exit if a close falls to Tk ${num(p.stop)} or lower. If neither happens, sell by ${p.sell_by}.`),
       rationaleBlock(o),
       h("div", { class: "sizer" },
@@ -437,7 +437,7 @@
     const vsIdx = s.top20_total - s.market_total, vsAll = s.top20_total - s.all_total;
     const out = h("div", null,
       h("h1", null, "Track record"),
-      h("p", { class: "sub" }, `Every month the Top 20 is bought in equal amounts and each share is sold at its own take-profit (+5% or more) or its own stop-loss (first close to reach either) or after 20 trading days, paying 0.5% brokerage each way on the part of the list that changes. All shares and the Sell list are traded the same way. ` +
+      h("p", { class: "sub" }, `Every month the Top 20 is bought in equal amounts and each share is sold at its own take-profit (+5% or more) or its own stop-loss (whichever comes first: the day's high reaching the take-profit, or a close at the stop) or after 20 trading days, paying 0.5% brokerage each way on the part of the list that changes. All shares and the Sell list are traded the same way. ` +
         `The model is retrained monthly on data available at the time, so these ${s.periods} periods (${Charts.fmtDate(s.start)} – ${Charts.fmtDate(s.end)}) are results it never saw while learning.`),
       h("div", { class: "grid tiles" },
         tile("Top 20 portfolio", spct(s.top20_total), "after costs, compounded", s.top20_total >= 0 ? "up" : "down"),
@@ -520,7 +520,7 @@
       h("h1", null, "How the scores work"),
       p("Everything here comes only from DSE prices, volumes and trades plus the weekly company snapshot. No news, no opinions."),
       h("h2", null, "The plan"),
-      p("Your goal: at least +5% within the next month. Buy today (or at the next session) and sell on the first close at the share's take-profit, any day it happens, or at its own stop-loss. If neither is reached, sell by the sell-by date one month later."),
+      p("Your goal: at least +5% within the next month. Buy today (or at the next session) and keep a sell order at the share's take-profit (it fills when the day's high gets there, any day), or exit on a close at its own stop-loss. If neither is reached, sell by the sell-by date one month later."),
       h("h2", null, "Take-profit: set per share, never below +5%"),
       h("ul", null,
         h("li", null, "Just under the nearest resistance above the price: its 3-month high, its usual price level, or the top of its 2-year regular range."),
@@ -539,7 +539,7 @@
         h("li", null, h("b", null, "Neutral: "), "everything else. Each share's page lists every condition it met or missed, the reasoning behind its plan, and what changed since the previous session."),
         h("li", null, h("b", null, "Usual price level: "), "the share's 2-year average, unless the share has moved to a new price range (last year's average 30%+ away from the year before's, like PENINSULA going from about Tk 11 to Tk 20–25). Then the old range would mislead, so last year's average is used."),
         h("li", null, h("b", null, "Why it matters: "), "on unseen days, shares with a +15 lead that were below their usual level did much better (about +0.9% per trade before costs) than those above it (about +0.2%), and shares 20%+ above their usual level lost about 1.3% per trade after costs."),
-        h("li", null, h("b", null, "Honest check: "), "on unseen days, Buys reached their take-profit first about 49% of the time and hit their stop first about 19% (a random share: about 38% and 30%), roughly break-even after ~1% costs. Sells hit their stop first 31% of the time and lost about 0.8% per trade after costs."),
+        h("li", null, h("b", null, "Honest check: "), "on unseen days, Buys reached their take-profit first about 60% of the time and hit their stop first about 17% (a random share: about 51% and 26%), about +0.9% per trade after ~1% costs. Sells hit their stop first 29% of the time and lost about 0.2% per trade after costs."),
         h("li", null, h("b", null, "Confidence (0–100): "), "history, liquidity, cycle regularity and how clear-cut the odds are. Junk shares are scaled down by a quarter, dead ones by half."),
         h("li", null, h("b", null, "Ranking: "), "Buys first, then Neutral, each ordered by lead; at most 4 per sector when showing all sectors.")),
       h("h2", null, "Trade plans"),
@@ -650,6 +650,8 @@
           ["Average trade size vs normal", m.trade_size != null ? Math.exp(m.trade_size).toFixed(1) + "×" : "–"],
           ["RSI (14)", m.rsi != null ? Math.round(m.rsi) : "–"],
           ["Daily swing (4 wks)", pct(m.vol20, 1)],
+          ["Usual reach of the day's high (4 wks)", m.reach20 != null ? "+" + pct(m.reach20, 1) : "–"],
+          ["Days the high reached +5% (4 wks)", m.reach5_hits20 ?? "–"],
           ["Upper-circuit hits (4 wks)", m.uc_hits20 ?? "–"],
           ["Median turnover", d.liq != null ? `Tk ${num(d.liq, 1)} mn/day` : "–"],
           ["Junk score", pct(m.junk_score)],

@@ -6,7 +6,8 @@ build the website data.
     python analyze.py --run prelim    # label the page as the 3 PM preliminary update
 
 The plan is a race: buy today, sell at the share's own take-profit (at least +5%, up to its
-nearest resistance) or at its own stop-loss (from its supports and volatility), whichever close comes first, or at the end of the month. For each share:
+nearest resistance; a resting sell order, so the day's high counts) or at its own stop-loss (from
+its supports and volatility, on a close), whichever comes first, or at the end of the month. For each share:
 - calibrated chances that the target comes first / the stop comes first / neither
 - expected trade result after ~1% round-trip costs
 - tag from fixed levels: Buy when the lead (target-first minus stop-first chance) is +15 or
@@ -115,7 +116,7 @@ def main():
     shares = m.info.index[m.info["is_equity"] & ~m.info["is_fund"]]
     btype, info = ex["btype"], m.info
     stop_w, tgt_w = ex["wide"]["stop_dist"], ex["wide"]["target_dist"]
-    lab_w, res_w = E.race(m.close, days, tgt_w, stop_w)
+    lab_w, res_w = E.race(m.close, days, tgt_w, stop_w, high=m.high)
     lab, res = lab_w.stack(future_stack=True).reindex(panel.index), res_w.stack(future_stack=True).reindex(panel.index)
     le, re_ = lab_w[equities].stack(), res_w[equities].stack()
     base_t, base_s = float((le == 1).mean()), float((le == -1).mean())

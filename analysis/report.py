@@ -495,7 +495,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "levels": {k: _r(bands[k][sym].iloc[-1], 3) for k in bands},
             "metrics": {k: _r(pt.at[sym, k], 4) for k in
                         ["band_all", "band60", "reward_risk", "up_room", "down_risk", "leg_progress", "ret5", "ret20",
-                         "rsi", "vol_ratio5", "updown_vol", "trade_size", "vol20", "uc_hits20", "rel_mkt20",
+                         "rsi", "vol_ratio5", "updown_vol", "trade_size", "vol20", "reach20", "reach5_hits20", "uc_hits20", "rel_mkt20",
                          "rel_sec20", "junk_score", "analog_ret_short", "analog_win_short", "regularity", "n_legs", "up_len", "dn_len", "up_pct", "dn_pct",
                          "med_trades", "history_days"]},
             "series": {"dates": [str(d) for d in idx], "close": ser(m.close), "volume": [_r(v, 0) for v in m.volume[sym][valid]],

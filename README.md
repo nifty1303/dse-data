@@ -18,7 +18,7 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
 - `update.py`: the downloader
 - `analyze.py` + `analysis/`: the scoring pipeline
   - `prep.py`: loads the data and corrects bonus-share / dividend price drops
-  - `features.py`: cycles, 2-year regular range and 3-month swing bands, money flow, junk pattern, market mood, and more
+  - `features.py`: cycles, 2-year regular range, how far the day's high usually reaches and 3-month swing bands, money flow, junk pattern, market mood, and more
   - `model.py`: the model and the calibrated +5% / −5% race odds
   - `expected.py`: the 1-month race (sell at +5%, −5% or after 20 trading days), tag rules, expected result, journey phase (bottoming, early/mid/late rise, topping, early/mid/late fall), verdict rules, projected path, and calendar statistics
   - `backtest.py`: the honest track record
@@ -29,7 +29,7 @@ Run locally: `pip install -r requirements.txt && python analyze.py`, then `pytho
 
 ## The 1-month plan
 
-Goal: at least +5% within a month. Buy today; sell on the first close at the share's take-profit (any day), or at its stop-loss, or by the sell-by date one month later.
+Goal: at least +5% within a month. Buy today; keep a sell order at the share's take-profit (it fills when the day's high reaches it, any day), or exit on a close at its stop-loss, or by the sell-by date one month later.
 - **Take-profit per share** (never below +5%): just under the nearest resistance (3-month high, usual price level, or top of the 2-year regular range) if it is 5%+ away and within the share's usual monthly move (max 15%); otherwise +5%.
 - **Stop-loss per share**: just under the 20-day low (else the 3-month low) less half a normal day's move, if 3–12% below the price; otherwise the share's usual 2-week swing (4–12%).
 - **Usual price level**: the 2-year average, or last year's average when the share moved to a new price range (last year's average 30%+ away from the year before's).
@@ -38,7 +38,7 @@ Goal: at least +5% within a month. Buy today; sell on the first close at the sha
 - **Sell** (either one): the stop is more likely first while the price is at or above its usual level, or the price is 20%+ above it without a +15 lead.
 - **Neutral**: everything else. Each share gets a written rationale, its price vs its 2-year average, and a "what changed since the last session" list.
 
-On unseen days Buys reached their take-profit first ~49% of the time vs the stop ~19% (a random share: ~38% / ~30%), about break-even after ~1% costs; Sells lost ~0.8% per trade after costs.
+On unseen days Buys reached their take-profit first ~60% of the time vs the stop ~17% (a random share: ~51% / ~26%), about +0.9% per trade after ~1% costs; Sells lost ~0.2% per trade after costs. The take-profit counts as reached when the day's high gets there (a resting sell order), the stop on the close.
 
 ## One-time setup for the website
 

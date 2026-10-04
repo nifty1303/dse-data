@@ -34,7 +34,7 @@ Goal: at least +5% within a month. Buy today; keep a sell order at the share's t
 - **Stop-loss per share**: just under the 20-day low (else the 3-month low) less half a normal day's move, if 3–12% below the price; otherwise the share's usual 2-week swing (4–12%).
 - **Usual price level**: the 2-year average, or last year's average when the share moved to a new price range (last year's average 30%+ away from the year before's).
 - **Lead** = chance of take-profit first − chance of stop first.
-- **Buy** (all must hold, fixed levels, no ranking against other shares): lead of +15 or more (+25 for operator / junk shares), price below its usual level, and not Topping or in a Mid fall.
+- **Buy** (all must hold, fixed levels, no ranking against other shares): lead of +15 or more (+25 for operator / junk shares), price below its usual level, not Topping or in a Mid fall, not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35), and a falling share (Early / Late fall, or 5%+ down in a week) must show a turn: a higher 10-day low, its 5-day average back above the 10-day, or 3%+ off its 10-day low.
 - **Sell** (either one): the stop is more likely first while the price is at or above its usual level, or the price is 20%+ above it without a +15 lead.
 - **Neutral**: everything else. Each share gets a written rationale, its price vs its 2-year average, and a "what changed since the last session" list.
 

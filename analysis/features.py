@@ -151,6 +151,9 @@ def build(m):
     W["rsi"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
     W["rsi"] = W["rsi"].fillna(50)
     W["higher_low"] = (l.rolling(10).min() / l.shift(10).rolling(10).min() - 1).clip(-0.5, 0.5)
+    # Turn-around signs for falling shares (used by the Buy rule, not the model).
+    W["ma5_vs_ma10"] = (_mean(c, 5, 5) / _mean(c, 10, 10) - 1).clip(-0.5, 0.5)
+    W["off_low10"] = (c / l.rolling(10, min_periods=5).min() - 1).clip(0, 2)
 
     # ---- C. money flow
     med_v120 = _median(v, 120, 40)
@@ -451,5 +454,5 @@ FEATURES = [f for fs in ANGLES.values() for f in fs]
 # shares beat others. Backtests improved without it, so it drives the warning banner only.
 MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
 MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
-INFO_COLS = ["fair_shift", "stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
+INFO_COLS = ["ma5_vs_ma10", "off_low10", "fair_shift", "stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

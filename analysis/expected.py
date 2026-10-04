@@ -90,7 +90,11 @@ TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
 BUY_LEAD = 0.15       # Buy: lead of +15 points or more,
 JUNK_LEAD = 0.25      #      +25 for operator / junk shares (their odds are less reliable),
 BUY_MAX_DEV = 0.0     #      price below its usual level (cheap by its own history),
-NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way
+NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way,
+DRASTIC_RET5 = -0.10  #      not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35),
+DRASTIC_RSI = 35      #      and a falling share (Early / Late fall, or 5%+ down in a week) only once it shows a turn:
+FALL_RET5 = -0.05     #      a higher 10-day low, its 5-day average back above the 10-day average, or 3%+ off its 10-day low
+TURN_OFF_LOW = 0.03
 SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or above its usual level,
                       #       or the price is 20%+ above its usual level without a +15 lead
 
@@ -125,10 +129,19 @@ def trade_value(pt, ps, goal, stop, flat_avg):
     return goal * pt - stop * ps + flat_avg * (1 - pt - ps).clip(lower=0) - COST
 
 
-def race_tag(pt, ps, phase, junk, dev2y):
+def fall_state(phase, ret5, rsi, lc_hits20, higher_low, ma5_vs_ma10, off_low10):
+    """Per share: drastic fall, still falling, and the turn-around signs seen (tested on unseen days in analyze.py)."""
+    drastic = (ret5 < DRASTIC_RET5) | (lc_hits20 > 0) | (rsi < DRASTIC_RSI)
+    falling = (phase.isin(["Early fall", "Late fall"]) | (ret5 < FALL_RET5)) & (phase != "Bottoming")
+    signs = pd.DataFrame({"higher 10-day low": higher_low > 0, "5-day average above 10-day": ma5_vs_ma10 > 0,
+                          f"{TURN_OFF_LOW:.0%}+ off its 10-day low": off_low10 > TURN_OFF_LOW})
+    return drastic.fillna(False), falling.fillna(False), signs.fillna(False)
+
+
+def race_tag(pt, ps, phase, junk, dev2y, drastic=False, falling=False, turning=True):
     lead = pt - ps
     need = np.where(junk, JUNK_LEAD, BUY_LEAD)
-    buy = (lead >= need) & (dev2y < BUY_MAX_DEV) & ~phase.isin(NO_BUY_PHASES)
+    buy = (lead >= need) & (dev2y < BUY_MAX_DEV) & ~phase.isin(NO_BUY_PHASES) & ~drastic & (~falling | turning)
     sell = ((ps > pt) & (dev2y >= 0)) | ((dev2y > SELL_DEV) & (lead < BUY_LEAD))
     return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index)
 

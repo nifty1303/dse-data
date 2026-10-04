@@ -231,17 +231,25 @@ def dev_text(dv, avg, shift=False):
 
 def tag_reason(r, price, sell_by, basis, tbasis):
     """Rule checks behind the tag, a one-line verdict and the plan's rationale."""
-    from .expected import BUY_LEAD, JUNK_LEAD, NO_BUY_PHASES, SELL_DEV
+    from .expected import BUY_LEAD, DRASTIC_RET5, DRASTIC_RSI, JUNK_LEAD, NO_BUY_PHASES, SELL_DEV
     pt, ps, sd, td = float(r["hit"]), float(r["stop_p"]), float(r["stop_dist"]), float(r["target_dist"])
     dv = float(r["dev2y"]) if not pd.isna(r["dev2y"]) else 0.0
     up, dn = price * (1 + td), price * (1 - sd)
     lead, junk, ph = pt - ps, bool(r["junk"]), r["phase"]
     need = JUNK_LEAD if junk else BUY_LEAD
+    drastic, falling, signs = bool(r["drastic"]), bool(r["falling"]), str(r["turn_signs"] or "")
+    hard = [s for s, on in [(f"{float(r['ret5']):+.0%} this week", float(r["ret5"]) < DRASTIC_RET5),
+                            (f"{int(r['lc_hits20'])} limit-down day(s) in 4 weeks", r["lc_hits20"] > 0),
+                            (f"RSI {float(r['rsi']):.0f}", float(r["rsi"]) < DRASTIC_RSI)] if on]
     buy = [{"ok": bool(lead >= need),
             "text": f"Take-profit first (Tk {up:,.2f}, +{td:.1%}) {pt:.0%} vs stop first (Tk {dn:,.2f}, −{sd:.1%}) {ps:.0%}: "
                     f"lead {lead * 100:+.0f} points (needs {need * 100:+.0f}" + (", higher for operator / junk shares" if junk else "") + ")"},
            {"ok": bool(dv < 0), "text": f"Price is below its usual level ({dv:+.1%})"},
-           {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Topping or Mid fall (it is {ph})"}]
+           {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Topping or Mid fall (it is {ph})"},
+           {"ok": not drastic, "text": "Not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35)"
+                                       + (f": {', '.join(hard)}" if hard else "")},
+           {"ok": bool(not falling or signs), "text": "If falling, it shows a turn: a higher 10-day low, 5-day average above 10-day, or 3%+ off its 10-day low"
+                                                      + (f" (seen: {signs})" if falling and signs else " (none yet)" if falling else " (not falling)")}]
     sell = [{"ok": bool(ps > pt and dv >= 0),
              "text": f"Stop first is more likely than take-profit first ({ps:.0%} vs {pt:.0%}) while the price is at or above its usual level ({dv:+.1%})"},
             {"ok": bool(dv > SELL_DEV and lead < BUY_LEAD),
@@ -255,7 +263,7 @@ def tag_reason(r, price, sell_by, basis, tbasis):
     elif r["verdict"] == "Buy":
         why = (f"Buy: {pt:.0%} chance of reaching its take-profit Tk {up:,.2f} (+{td:.1%}) before {sell_by} against {ps:.0%} of first falling to "
                f"its stop Tk {dn:,.2f} (−{sd:.1%}), a lead of {lead * 100:.0f} points; it is {-dv:.1%} below its usual price level, and the journey "
-               f"({ph}) allows a Buy.")
+               f"({ph}) allows a Buy" + (f"; it has been falling but shows a turn ({signs})." if falling else "."))
     else:
         miss = []
         if lead < need:
@@ -265,6 +273,10 @@ def tag_reason(r, price, sell_by, basis, tbasis):
         if ph in NO_BUY_PHASES:
             miss.append(f"it is {ph.lower()}" + (": the rise is tiring, wait for a pullback or a bottom" if ph == "Topping"
                                                   else ": the fall is still under way, wait for it to bottom out"))
+        if drastic:
+            miss.append(f"it is falling hard ({', '.join(hard)}): wait for the selling to calm down")
+        elif falling and not signs:
+            miss.append("it is still falling with no sign of a turn yet: wait for a higher low or a bounce off the bottom")
         why = "Neutral: " + ("; ".join(miss) + "." if miss else "no clear edge.")
     rr = td / sd
     be = sd / (td + sd)

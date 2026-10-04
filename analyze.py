@@ -53,7 +53,11 @@ def build_table(t, panel_day, goal, flat_avg):
     t["junk"] = p["type_junk"].fillna(0) > 0
     t["dev2y"], t["band_all"] = p["dev2y"], p["band_all"]
     t["lead"] = t["buy"] - t["sell"]
-    t["verdict"] = E.race_tag(t["buy"], t["sell"], t["phase"], t["junk"], t["dev2y"].fillna(0))
+    t["drastic"], t["falling"], signs = E.fall_state(t["phase"], p["ret5"], p["rsi"], p["lc_hits20"], p["higher_low"], p["ma5_vs_ma10"], p["off_low10"])
+    t["turn_signs"] = signs.apply(lambda r: ", ".join(r.index[r.values]), axis=1)
+    t["ret5"], t["rsi"], t["lc_hits20"] = p["ret5"], p["rsi"], p["lc_hits20"]
+    t["verdict"] = E.race_tag(t["buy"], t["sell"], t["phase"], t["junk"], t["dev2y"].fillna(0),
+                              t["drastic"], t["falling"], t["turn_signs"] != "")
     t["tier"] = t["verdict"].map(E.TIER)
     t["rank_score"] = t["tier"] + t["lead"] + 1e-6 * t["conf"]
     t["sell_score"] = (2 - t["tier"]) - t["lead"] + 1e-6 * t["conf"]

@@ -21,7 +21,7 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
   - `prep.py`: loads the data and corrects bonus-share / dividend price drops
   - `features.py`: cycles, 2-year regular range, how far the day's high usually reaches and 3-month swing bands, money flow, junk pattern, market mood, and more
   - `model.py`: the model and the calibrated +5% / −5% race odds
-  - `expected.py`: the 1-month race (sell at +5%, −5% or after 20 trading days), tag rules, expected result, journey phase (bottoming, early/mid/late rise, topping, early/mid/late fall), verdict rules, projected path, and calendar statistics
+  - `expected.py`: the 1-month race (sell at +5%, −5% or after 20 trading days), tag rules, expected result, journey (what the share is doing now: rising, turning down, sideways, turning up, falling; from its last month and this week), verdict rules, projected path, and calendar statistics
   - `backtest.py`: the honest track record
   - `report.py`: the site's data files
   - `scorecard.py`: the live record (scores every saved call with the backtest's rules)
@@ -36,7 +36,8 @@ Goal: at least +5% within a month. Buy today; keep a sell order at the share's t
 - **Stop-loss per share**: just under the 20-day low (else the 3-month low) less half a normal day's move, if 3–12% below the price; otherwise the share's usual 2-week swing (4–12%).
 - **Usual price level**: the 2-year average, or last year's average when the share moved to a new price range (last year's average 30%+ away from the year before's).
 - **Lead** = chance of take-profit first − chance of stop first.
-- **Buy** (all must hold, fixed levels, no ranking against other shares): lead of +15 or more (+25 for operator / junk shares), price below its usual level, not Topping or in a Mid fall, not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35), and a falling share (Early / Late fall, or 5%+ down in a week) must show a turn: a higher 10-day low, its 5-day average back above the 10-day, or 3%+ off its 10-day low.
+- **Buy** (all must hold, fixed levels, no ranking against other shares): lead of +15 or more (+25 for operator / junk shares), price below its usual level, not Turning down, not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35), a falling share (Falling / Falling, bouncing, or 5%+ down in a week) must show a turn: a higher 10-day low, its 5-day average back above the 10-day, or 3%+ off its 10-day low; and when the market is gloomy or overheated (under 30% / over 70% of shares above their 20-day average) the share must be doing better than the market over the last month.
+- **Journey** (what the share is doing now): from its last month and this week against its own usual monthly move, not from an old low: Rising, Rising dipping, Turning down, Sideways (lifting / slipping), Turning up, Falling bouncing, Falling.
 - **Sell** (either one): the stop is more likely first while the price is at or above its usual level, or the price is 20%+ above it without a +15 lead.
 - **Neutral**: everything else. Each share gets a written rationale, its price vs its 2-year average, and a "what changed since the last session" list.
 

@@ -75,8 +75,9 @@
     qty = Math.max(qty, 0);
     return { qty, cost: qty * price, loss: qty * perShare, limits };
   }
-  const PHASE_ICON = { Bottoming: "↺", "Early rise": "↗", "Mid rise": "↗", "Late rise": "⤴", Topping: "↻", "Early fall": "↘", "Mid fall": "↘", "Late fall": "⤵", Sideways: "→" };
-  const upPhase = p => /rise|Bottoming/.test(p);
+  const PHASE_ICON = { Rising: "↗", "Rising, dipping": "↗", "Turning down": "↻", "Sideways, lifting": "→", Sideways: "→", "Sideways, slipping": "→",
+    "Turning up": "↺", "Falling, bouncing": "↘", Falling: "↘" };
+  const upPhase = p => /^Rising|Turning up|lifting/.test(p);
 
   // ---------- building blocks
   function badge(v) {
@@ -96,7 +97,7 @@
       frac == null ? null : h("div", { class: "meter" }, h("i", { style: `width:${Math.max(0, Math.min(1, frac)) * 100}%` })));
   }
   const moveStat = o => stat("lead", `${((o.hit - o.stop_p) * 100).toFixed(0)} pts`, Math.max(0, Math.min(1, 0.5 + (o.hit - o.stop_p))),
-    "Chance of the take-profit first minus chance of the stop first. Buy needs +15 or more (+25 for junk shares), a price below its usual level, a journey other than Topping / Mid fall, no drastic fall, and a turn-up sign if it has been falling");
+    "Chance of the take-profit first minus chance of the stop first. Buy needs +15 or more (+25 for junk shares), a price below its usual level, a journey other than Turning down, no drastic fall, a turn-up sign if it has been falling, and in a gloomy or overheated market, doing better than the market");
   const devText = r => r.dev2y == null ? null : h("div", { class: "small" }, `Price Tk ${num(r.close)} is `,
     h("b", { class: r.dev2y >= 0 ? "up" : "down" }, spct(r.dev2y)), ` vs its usual price level, the ${r.fair_basis || "2-year"} average (Tk ${num(r.avg2y)})`,
     r.fair_basis === "1-year" ? h("span", { class: "muted" }, " · it moved to a new price range in the last year, so the 2-year average would mislead") : null);
@@ -196,7 +197,7 @@
         h("div", { class: "reg" }), b == null ? null : h("div", { class: "pin", style: `left:${15 + b * 70}%` })),
       h("div", { class: "gauge-lbl" }, h("span", null, "2-yr low"),
         h("span", null, r.band == null ? "range not known yet" : `${pct(r.band)} up the regular range`), h("span", null, "2-yr high")),
-      leg ? h("div", { class: "small muted" }, `Current swing: ${leg} for ${r.leg_days} days${long ? " (longer than usual)" : r.leg_typ ? `, typical ~${r.leg_typ}` : ""}`) : null);
+      leg ? h("div", { class: "small muted" }, `Longer swing (since its last big turn): ${leg} for ${r.leg_days} days${long ? " (longer than usual)" : r.leg_typ ? `, typical ~${r.leg_typ}` : ""}`) : null);
   }
   function tags(r) {
     const junk = /junk/i.test(r.type);
@@ -301,7 +302,7 @@
     const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
     const sub = side === "sell"
       ? `Sell = more likely to hit its stop than its take-profit while not cheap, or stretched 20%+ above its usual price level without upside odds. Worst first.`
-      : `Buy = take-profit first beats stop first by 15+ points, the price is below its usual level, the share is not Topping or in a Mid fall, not falling hard, and a falling share shows a turn-up sign.`;
+      : `Buy = take-profit first beats stop first by 15+ points, the price is below its usual level, the share is not Turning down or falling hard, a falling share shows a turn-up sign, and in a gloomy or overheated market it is doing better than the market.`;
     const showExtras = side === "buy" && !sector && !phase;
     const wrongSide = list.filter(r => r.s.verdict !== (side === "buy" ? "Buy" : "Sell")).length;
     return h("div", null,
@@ -595,7 +596,11 @@
       h("ul", null,
         h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs its usual level, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
         h("li", null, h("b", null, "Lead: "), "chance of the take-profit first minus chance of the stop first, in points."),
-        h("li", null, h("b", null, "Buy (all must hold): "), "lead of +15 points or more (+25 for operator / junk shares); price below its usual level; journey not Topping or Mid fall; not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35); and if it has been falling (Early / Late fall, or 5%+ down in a week), a sign of a turn: a higher 10-day low, the 5-day average back above the 10-day, or 3%+ off its 10-day low. These are fixed levels: a share isn't compared with other shares."),
+        h("li", null, h("b", null, "Journey (what the share is doing now): "), "from its last month and this week, measured against its own usual monthly move, not against an old low. " +
+          "Rising / Rising, dipping: up over the month (dipping = down this week). Turning down: up over the month but has given back much of it from its recent high. " +
+          "Sideways (lifting / slipping): flat over the month. Turning up: down over the month but lifting clearly off its recent low. Falling / Falling, bouncing: down over the month. " +
+          "Each share's page also says whether it is doing better or worse than the market, and the market mood: gloomy (under 30% of shares above their 20-day average), calm, or overheated (over 70%)."),
+        h("li", null, h("b", null, "Buy (all must hold): "), "lead of +15 points or more (+25 for operator / junk shares); price below its usual level; journey not Turning down; not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35); if it has been falling (Falling / Falling, bouncing, or 5%+ down in a week), a sign of a turn: a higher 10-day low, the 5-day average back above the 10-day, or 3%+ off its 10-day low; and when the market is gloomy or overheated, the share is doing better than the market over the last month. These are fixed levels: a share isn't compared with other shares."),
         h("li", null, h("b", null, "Sell (either one): "), "the stop is more likely to come first than the take-profit while the price is at or above its usual level; or the price is more than 20% above its usual level without a +15 lead."),
         h("li", null, h("b", null, "Neutral: "), "everything else. Each share's page lists every condition it met or missed, the reasoning behind its plan, and what changed since the previous session."),
         h("li", null, h("b", null, "Usual price level: "), "the share's 2-year average, unless the share has moved to a new price range (last year's average 30%+ away from the year before's, like PENINSULA going from about Tk 11 to Tk 20–25). Then the old range would mislead, so last year's average is used."),
@@ -684,7 +689,7 @@
           ["Position in regular range", pct(m.band_all)],
           ["Room to regular high", spct(d.up_room)],
           ["Drop to 2-year low", spct(d.down_risk == null ? null : -d.down_risk)],
-          ["Current swing", `${legTxt}${d.leg_days != null ? ", day " + d.leg_days : ""}`],
+          ["Longer swing (since last big turn)", `${legTxt}${d.leg_days != null ? ", day " + d.leg_days : ""}`],
           ["Typical rise", m.up_len != null ? `${Math.round(m.up_len)} days, ${spct(m.up_pct, 0)}` : "–"],
           ["Typical fall", m.dn_len != null ? `${Math.round(m.dn_len)} days, ${spct(m.dn_pct, 0)}` : "–"],
           ["Completed swings / regularity", `${m.n_legs ?? "–"} / ${m.regularity != null ? pct(m.regularity) : "–"}`],

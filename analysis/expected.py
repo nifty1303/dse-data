@@ -66,18 +66,20 @@ def thursday_stats(close, universe, dates):
 
 
 # ------------------------------------------------------------ journey & verdict
-# Where the share is on its current swing, from the causal swing detector.
-PHASES = ["Bottoming", "Early rise", "Mid rise", "Late rise", "Topping", "Early fall", "Mid fall", "Late fall", "Sideways"]
+# What the share is doing now: its last month (vs its own usual monthly move) and this week,
+# not where it stands against an old swing low. "Usual monthly move" = daily swing x sqrt(20), 4-15%.
+PHASES = ["Rising", "Rising, dipping", "Turning down", "Sideways, lifting", "Sideways", "Sideways, slipping",
+          "Turning up", "Falling, bouncing", "Falling"]
 PHASE_TEXT = {
-    "Bottoming": "a long fall that has started turning up",
-    "Early rise": "early in a new rise",
-    "Mid rise": "midway through a rise",
-    "Late rise": "a rise that is running longer than usual",
-    "Topping": "a long rise that has started turning down",
-    "Early fall": "early in a new fall",
-    "Mid fall": "midway through a fall",
-    "Late fall": "a fall that is running longer than usual",
-    "Sideways": "no clear swing",
+    "Rising": "up over the last month and still rising this week",
+    "Rising, dipping": "up over the last month, dipping this week",
+    "Turning down": "up over the last month but has given back much of it from its recent high",
+    "Sideways, lifting": "flat over the last month, lifting this week",
+    "Sideways": "flat over the last month",
+    "Sideways, slipping": "flat over the last month, slipping this week",
+    "Turning up": "down over the last month but lifting clearly off its recent low",
+    "Falling, bouncing": "down over the last month, bouncing a little this week",
+    "Falling": "down over the last month and still falling this week",
 }
 # The 1-month plan is a race: buy today, sell when the day's high reaches the take-profit (a resting
 # sell order) or on the first close at the share's own stop-loss (from its supports and volatility,
@@ -90,11 +92,13 @@ TIER = {"Buy": 2, "Neutral": 1, "Sell": 0}
 BUY_LEAD = 0.15       # Buy: lead of +15 points or more,
 JUNK_LEAD = 0.25      #      +25 for operator / junk shares (their odds are less reliable),
 BUY_MAX_DEV = 0.0     #      price below its usual level (cheap by its own history),
-NO_BUY_PHASES = ("Topping", "Mid fall")   # and not while the rise is tiring or the fall is under way,
+NO_BUY_PHASES = ("Turning down",)   # not while a rise is being given back,
 DRASTIC_RET5 = -0.10  #      not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35),
-DRASTIC_RSI = 35      #      and a falling share (Early / Late fall, or 5%+ down in a week) only once it shows a turn:
+DRASTIC_RSI = 35      #      and a falling share (Falling / Falling, bouncing, or 5%+ down in a week) only once it shows a turn:
 FALL_RET5 = -0.05     #      a higher 10-day low, its 5-day average back above the 10-day average, or 3%+ off its 10-day low
 TURN_OFF_LOW = 0.03
+GLOOMY, HOT = 0.30, 0.70   # market mood: share of all shares above their 20-day average. Below 30% (gloomy) or
+                           # above 70% (overheated), Buy only shares doing better than the market over the last month
 SELL_DEV = 0.20       # Sell: stop more likely first while the price is at or above its usual level,
                       #       or the price is 20%+ above its usual level without a +15 lead
 
@@ -132,30 +136,36 @@ def trade_value(pt, ps, goal, stop, flat_avg):
 def fall_state(phase, ret5, rsi, lc_hits20, higher_low, ma5_vs_ma10, off_low10):
     """Per share: drastic fall, still falling, and the turn-around signs seen (tested on unseen days in analyze.py)."""
     drastic = (ret5 < DRASTIC_RET5) | (lc_hits20 > 0) | (rsi < DRASTIC_RSI)
-    falling = (phase.isin(["Early fall", "Late fall"]) | (ret5 < FALL_RET5)) & (phase != "Bottoming")
+    falling = phase.isin(["Falling", "Falling, bouncing"]) | (ret5 < FALL_RET5)
     signs = pd.DataFrame({"higher 10-day low": higher_low > 0, "5-day average above 10-day": ma5_vs_ma10 > 0,
                           f"{TURN_OFF_LOW:.0%}+ off its 10-day low": off_low10 > TURN_OFF_LOW})
     return drastic.fillna(False), falling.fillna(False), signs.fillna(False)
 
 
-def race_tag(pt, ps, phase, junk, dev2y, drastic=False, falling=False, turning=True):
+def market_ok(breadth, ret20, mkt_ret20):
+    """False when the market is gloomy or overheated and the share is not doing better than it."""
+    return ~((breadth < GLOOMY) | (breadth > HOT)) | (ret20 > mkt_ret20)
+
+
+def race_tag(pt, ps, phase, junk, dev2y, drastic=False, falling=False, turning=True, mkt_ok=True):
     lead = pt - ps
     need = np.where(junk, JUNK_LEAD, BUY_LEAD)
-    buy = (lead >= need) & (dev2y < BUY_MAX_DEV) & ~phase.isin(NO_BUY_PHASES) & ~drastic & (~falling | turning)
+    buy = (lead >= need) & (dev2y < BUY_MAX_DEV) & ~phase.isin(NO_BUY_PHASES) & ~drastic & (~falling | turning) & mkt_ok
     sell = ((ps > pt) & (dev2y >= 0)) | ((dev2y > SELL_DEV) & (lead < BUY_LEAD))
     return pd.Series(np.select([buy, sell], ["Buy", "Sell"], "Neutral"), index=pt.index)
 
 
-def phase(leg_dir, progress, ret5):
-    """Vectorised journey phase from swing direction, progress vs typical length, and this week's move."""
-    up, down = leg_dir == 1, leg_dir == -1
-    late = progress >= 1.0
-    early = progress < 0.5
+def phase(ret5, ret20, dist_ma20, vol20, dd20, up20):
+    """What the share is doing now, from its last month and this week (see PHASE_TEXT)."""
+    mv = (vol20 * np.sqrt(20)).clip(0.04, 0.15)                # its usual 1-month move
+    up = (ret20 > 0.5 * mv) & (dist_ma20 > 0)
+    dn = (ret20 < -0.5 * mv) & (dist_ma20 < 0)
     return pd.Series(np.select(
-        [up & late & (ret5 < 0), up & late, up & early, up,
-         down & late & (ret5 > 0), down & late, down & early, down],
-        ["Topping", "Late rise", "Early rise", "Mid rise", "Bottoming", "Late fall", "Early fall", "Mid fall"],
-        "Sideways"), index=leg_dir.index)
+        [up & (dd20 < -0.6 * mv), up & (ret5 < 0), up,
+         dn & (up20 > 0.5 * mv) & (ret5 > 0), dn & (ret5 > 0), dn,
+         ret5 > 0.4 * mv, ret5 < -0.4 * mv],
+        ["Turning down", "Rising, dipping", "Rising", "Turning up", "Falling, bouncing", "Falling",
+         "Sideways, lifting", "Sideways, slipping"], "Sideways"), index=ret5.index)
 
 
 def path_quantiles(fwd_wide, days):

@@ -12,7 +12,7 @@ its supports and volatility, on a close), whichever comes first, or at the end o
 - expected trade result after ~1% round-trip costs
 - tag from fixed levels: Buy when the lead (target-first minus stop-first chance) is +15 or
   more (+25 for junk shares), the price is below its 2-year average and the share is not
-  Topping or in a Mid fall; Sell when the stop is more likely first while the price is at or
+  Turning down, plus the falling-share and market-mood checks; Sell when the stop is more likely first while the price is at or
   above its 2-year average, or the price is 20%+ above that average without a +15 lead
 - journey, trade plan (buy zone, target, stop, sell-by date) and projected range
 
@@ -51,15 +51,17 @@ def build_table(t, panel_day, goal, flat_avg):
     t["target_dist"] = p["target_dist"].fillna(goal)
     t["value"] = E.trade_value(t["buy"], t["sell"], t["target_dist"], t["stop_dist"], flat_avg)
     t["exp"] = t["value"] + E.COST                                               # gross expected result
-    t["phase"] = E.phase(p["leg_dir"], p["leg_progress"], p["ret5"])
+    t["phase"] = E.phase(p["ret5"], p["ret20"], p["dist_ma20"], p["vol20"], p["dd20"], p["up20"])
     t["junk"] = p["type_junk"].fillna(0) > 0
     t["dev2y"], t["band_all"] = p["dev2y"], p["band_all"]
     t["lead"] = t["buy"] - t["sell"]
     t["drastic"], t["falling"], signs = E.fall_state(t["phase"], p["ret5"], p["rsi"], p["lc_hits20"], p["higher_low"], p["ma5_vs_ma10"], p["off_low10"])
     t["turn_signs"] = signs.apply(lambda r: ", ".join(r.index[r.values]), axis=1)
     t["ret5"], t["rsi"], t["lc_hits20"] = p["ret5"], p["rsi"], p["lc_hits20"]
+    t["ret20"], t["mkt_ret20"], t["breadth"] = p["ret20"], p["mkt_ret20"], p["breadth"]
+    t["mkt_ok"] = E.market_ok(p["breadth"], p["ret20"], p["mkt_ret20"]).fillna(True)
     t["verdict"] = E.race_tag(t["buy"], t["sell"], t["phase"], t["junk"], t["dev2y"].fillna(0),
-                              t["drastic"], t["falling"], t["turn_signs"] != "")
+                              t["drastic"], t["falling"], t["turn_signs"] != "", t["mkt_ok"])
     t["tier"] = t["verdict"].map(E.TIER)
     t["rank_score"] = t["tier"] + t["lead"] + 1e-6 * t["conf"]
     t["sell_score"] = (2 - t["tier"]) - t["lead"] + 1e-6 * t["conf"]

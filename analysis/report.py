@@ -185,19 +185,26 @@ def sentence(angle, p, ctx, key):
     return angle
 
 
+def mood_text(breadth, mkt20):
+    """The market right now, in a few words."""
+    from .expected import GLOOMY, HOT
+    if pd.isna(breadth):
+        return "the market mood is unknown"
+    feel = "gloomy" if breadth < GLOOMY else "overheated" if breadth > HOT else "calm"
+    return f"the market is {feel} ({breadth:.0%} of shares above their 20-day average; index {mkt20:+.1%} over the month)"
+
+
 def journey(p, ph):
-    """One sentence on where the share is on its current swing."""
+    """What the share is doing now (last month and this week), and against the market."""
     from .expected import PHASE_TEXT
-    if ph == "Sideways" or pd.isna(p["leg_days"]):
-        return "No clear swing yet: the price has been moving sideways."
-    up = p["leg_dir"] == 1
-    typ = p["up_len"] if up else p["dn_len"]
-    move = p["leg_move"]
-    s = (f"{ph}: {PHASE_TEXT[ph]}. It has been {'rising' if up else 'falling'} for {int(p['leg_days'])} trading days "
-         f"({move:+.1%} so far)")
-    if not pd.isna(typ):
-        s += f"; its typical {'rise' if up else 'fall'} lasts about {int(typ)} days"
-    s += f", and it moved {p['ret5']:+.1%} this week."
+    mv = float(np.clip((p["vol20"] if not pd.isna(p["vol20"]) else 0.02) * np.sqrt(20), 0.04, 0.15))
+    s = (f"{ph}: {PHASE_TEXT.get(ph, '')}. Over the last month it moved {p['ret20']:+.1%} (it usually moves about ±{mv:.0%} in a month) "
+         f"and {p['ret5']:+.1%} this week; it is " + ("at its 20-day high" if p["dd20"] > -0.005 else f"{-p['dd20']:.1%} below its 20-day high")
+         + (" and at its 20-day low." if p["up20"] < 0.005 else f" and {p['up20']:.1%} above its 20-day low."))
+    if not pd.isna(p["mkt_ret20"]):
+        diff = p["ret20"] - p["mkt_ret20"]
+        s += (f" It is doing {'better' if diff > 0 else 'worse'} than the market ({diff * 100:+.1f} points over the month), and "
+              + mood_text(p["breadth"], p["mkt_ret20"]) + ".")
     return s
 
 
@@ -231,13 +238,15 @@ def dev_text(dv, avg, shift=False):
 
 def tag_reason(r, price, sell_by, basis, tbasis):
     """Rule checks behind the tag, a one-line verdict and the plan's rationale."""
-    from .expected import BUY_LEAD, DRASTIC_RET5, DRASTIC_RSI, JUNK_LEAD, NO_BUY_PHASES, SELL_DEV
+    from .expected import BUY_LEAD, DRASTIC_RET5, DRASTIC_RSI, GLOOMY, HOT, JUNK_LEAD, NO_BUY_PHASES, SELL_DEV
     pt, ps, sd, td = float(r["hit"]), float(r["stop_p"]), float(r["stop_dist"]), float(r["target_dist"])
     dv = float(r["dev2y"]) if not pd.isna(r["dev2y"]) else 0.0
     up, dn = price * (1 + td), price * (1 - sd)
     lead, junk, ph = pt - ps, bool(r["junk"]), r["phase"]
     need = JUNK_LEAD if junk else BUY_LEAD
     drastic, falling, signs = bool(r["drastic"]), bool(r["falling"]), str(r["turn_signs"] or "")
+    br, m20, r20 = float(r["breadth"]), float(r["mkt_ret20"]), float(r["ret20"])
+    mkt_ok, extreme = bool(r["mkt_ok"]), not pd.isna(br) and (br < GLOOMY or br > HOT)
     hard = [s for s, on in [(f"{float(r['ret5']):+.0%} this week", float(r["ret5"]) < DRASTIC_RET5),
                             (f"{int(r['lc_hits20'])} limit-down day(s) in 4 weeks", r["lc_hits20"] > 0),
                             (f"RSI {float(r['rsi']):.0f}", float(r["rsi"]) < DRASTIC_RSI)] if on]
@@ -245,11 +254,14 @@ def tag_reason(r, price, sell_by, basis, tbasis):
             "text": f"Take-profit first (Tk {up:,.2f}, +{td:.1%}) {pt:.0%} vs stop first (Tk {dn:,.2f}, −{sd:.1%}) {ps:.0%}: "
                     f"lead {lead * 100:+.0f} points (needs {need * 100:+.0f}" + (", higher for operator / junk shares" if junk else "") + ")"},
            {"ok": bool(dv < 0), "text": f"Price is below its usual level ({dv:+.1%})"},
-           {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Topping or Mid fall (it is {ph})"},
+           {"ok": bool(ph not in NO_BUY_PHASES), "text": f"Journey is not Turning down (it is {ph})"},
            {"ok": not drastic, "text": "Not in a drastic fall (10%+ down in a week, a limit-down day in 4 weeks, or RSI below 35)"
                                        + (f": {', '.join(hard)}" if hard else "")},
            {"ok": bool(not falling or signs), "text": "If falling, it shows a turn: a higher 10-day low, 5-day average above 10-day, or 3%+ off its 10-day low"
-                                                      + (f" (seen: {signs})" if falling and signs else " (none yet)" if falling else " (not falling)")}]
+                                                      + (f" (seen: {signs})" if falling and signs else " (none yet)" if falling else " (not falling)")},
+           {"ok": mkt_ok, "text": "If the market is gloomy or overheated (under 30% or over 70% of shares above their 20-day average), "
+                                  f"the share is doing better than the market: now {mood_text(br, m20)}"
+                                  + (f"; the share moved {r20:+.1%} over the month" if extreme else "")}]
     sell = [{"ok": bool(ps > pt and dv >= 0),
              "text": f"Stop first is more likely than take-profit first ({ps:.0%} vs {pt:.0%}) while the price is at or above its usual level ({dv:+.1%})"},
             {"ok": bool(dv > SELL_DEV and lead < BUY_LEAD),
@@ -271,12 +283,13 @@ def tag_reason(r, price, sell_by, basis, tbasis):
         if dv >= 0:
             miss.append(f"it is {dv:+.1%} vs its usual price level, so not cheap")
         if ph in NO_BUY_PHASES:
-            miss.append(f"it is {ph.lower()}" + (": the rise is tiring, wait for a pullback or a bottom" if ph == "Topping"
-                                                  else ": the fall is still under way, wait for it to bottom out"))
+            miss.append("it is turning down: it has given back much of its recent rise, wait for it to settle")
         if drastic:
             miss.append(f"it is falling hard ({', '.join(hard)}): wait for the selling to calm down")
         elif falling and not signs:
             miss.append("it is still falling with no sign of a turn yet: wait for a higher low or a bounce off the bottom")
+        if not mkt_ok:
+            miss.append(f"{mood_text(br, m20)}, and this share ({r20:+.1%} over the month) is not doing better than the market")
         why = "Neutral: " + ("; ".join(miss) + "." if miss else "no clear edge.")
     rr = td / sd
     be = sd / (td + sd)

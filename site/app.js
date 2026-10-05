@@ -1,5 +1,5 @@
 // DSE Signals front end: one plan, the next month (buy now, sell at the share's own take-profit (+5% or more), at its own stop, or on the sell-by date).
-// Reads data/summary.json, data/track.json and data/stocks/<SYM>.json.
+// Reads data/summary.json, data/track.json, data/scorecard.json and data/stocks/<SYM>.json.
 (function () {
   const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 125, side: "buy", sector: "", phase: "" };
   const app = () => document.getElementById("app");
@@ -514,6 +514,67 @@
     return out;
   }
 
+  // ---------- Live record: every saved call scored once its month is over
+  async function viewLive() {
+    if (!S.live) {
+      const res = await fetch("data/scorecard.json", { cache: "no-cache" });
+      if (!res.ok) return h("div", { class: "note" }, "The live record isn't available yet. It appears after the next site update.");
+      S.live = await res.json();
+    }
+    const L = S.live, bt = Object.fromEntries((L.backtest || []).map(v => [v.verdict, v]));
+    const OUT = { "Take-profit": ["Take-profit", "up"], Stop: ["Stop-loss", "down"], "Sell-by": ["Sold at sell-by", ""] };
+    const st = (s, k) => (s && s.n ? k(s) : "–");
+    const outcome = r => r.status !== "closed" ? h("span", { class: "muted" }, "Open") :
+      h("span", { class: OUT[r.outcome][1] }, OUT[r.outcome][0]);
+    const tagRow = (v, s, label) => h("tr", { style: "cursor:default" }, h("td", null, badge(v.verdict), label ? h("span", { class: "small muted" }, " " + label) : null),
+      h("td", { class: "r" }, s.n.toLocaleString()), h("td", { class: "r g" }, st(s, s => pct(s.target))), h("td", { class: "r rd" }, st(s, s => pct(s.stop))),
+      h("td", { class: "r" }, st(s, s => pct(s.neither))), h("td", { class: "r" }, st(s, s => num(s.days, 1))),
+      h("td", { class: "r " + (s.n ? (s.net >= 0 ? "up" : "down") : "") }, st(s, s => spct(s.net, 2))),
+      h("td", { class: "r small muted" }, bt[v.verdict] ? `${pct(bt[v.verdict].target)} / ${pct(bt[v.verdict].stop)} / ${spct(bt[v.verdict].net, 2)}` : "–"));
+    return h("div", null,
+      h("h1", null, "Live record"),
+      h("p", { class: "sub" }, `Every call the site has made since ${Charts.fmtDate(L.first_signal)}, saved the day it was made and never changed, then scored by what really happened: ` +
+        "bought at that day's close, sold on the first day the high reached the take-profit, on the first close at or below the stop, or at the close on the sell-by date. " +
+        "These are the backtest's rules, so the two can be compared. Results are after ~1% round-trip costs."),
+      h("div", { class: "grid tiles" },
+        tile("Calls saved", L.calls.toLocaleString(), "every share, every session"),
+        tile("Finished", L.finished.toLocaleString(), "hit a level or reached sell-by"),
+        tile("Still open", L.open.toLocaleString(), L.next_close ? `next sell-by ${Charts.fmtDate(L.next_close)}` : ""),
+        tile("Buy calls finished", (L.by_tag[0].first.n || 0).toLocaleString(), "counted on their first day as Buy")),
+      L.basis === "settled" ? null : h("div", { class: "note", style: "margin-top:12px" },
+        h("b", null, "Too early to judge. "), `No day's calls have completed their month yet (the first sell-by is ${Charts.fmtDate(L.next_close)}). ` +
+        "The tables below show only the calls that already hit their take-profit or stop, which are the quick movers, so they will look much better or worse than the final result. " +
+        "From the first sell-by date on, the totals count only days whose whole month is over."),
+      h("h2", null, "How each tag is doing" + (L.basis === "settled" ? ` (${L.settled_days} completed day${L.settled_days === 1 ? "" : "s"})` : " (early finishes only)")),
+      h("p", { class: "sub" }, "\"First day\" counts a share once when it gets a tag (a share that stays Buy for 10 sessions is one trade, not 10); \"every day\" counts every session's call. The last column is what the backtest promised on unseen days: take-profit first / stop first / average after costs."),
+      h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Tag", "Finished", "TP first", "Stop first", "Neither", "Avg days", "Avg after costs", "Backtest"]
+          .map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
+        h("tbody", null, L.by_tag.flatMap(v => [tagRow(v, v.first, "first day"), tagRow(v, v.all, "every day")])))),
+      h("h2", null, "Do the odds come true?"),
+      h("p", { class: "sub" }, "Finished calls grouped by their chance of reaching the take-profit first. If the odds are right, the actual rate should be close to the predicted one."),
+      L.odds.length ? h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Chance given", "Calls", "Predicted", "Actually hit TP", "Hit stop"].map((c, i) => h("th", { class: i ? "r" : "" }, c)))),
+        h("tbody", null, L.odds.map(o => h("tr", { style: "cursor:default" }, h("td", null, o.bucket), h("td", { class: "r" }, o.n.toLocaleString()),
+          h("td", { class: "r" }, pct(o.predicted)), h("td", { class: "r g" }, pct(o.actual)), h("td", { class: "r rd" }, pct(o.stop)))))))
+        : h("p", { class: "small muted" }, "Appears once calls start finishing."),
+      h("h2", null, "Buy calls, one by one"),
+      h("p", { class: "sub" }, "Each share on the first day it was tagged Buy, newest first. Click a row for the share's page."),
+      h("div", { class: "tbl-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Date", "Share", "Chance", "Bought", "Take-profit", "Stop", "Sell by", "Outcome", "Exit", "Days", "Result", "Still needs"]
+          .map((c, i) => h("th", { class: i > 1 && i !== 6 && i !== 7 && i !== 8 ? "r" : "" }, c)))),
+        h("tbody", null, L.buys.map(r => h("tr", { onclick: () => go(r.symbol) },
+          h("td", null, Charts.fmtDate(r.date)), h("td", null, h("b", null, r.symbol)), h("td", { class: "r" }, pct(r.hit)),
+          h("td", { class: "r" }, num(r.price)), h("td", { class: "r g" }, num(r.take_profit)), h("td", { class: "r rd" }, num(r.stop)),
+          h("td", null, Charts.fmtDate(r.sell_by)), h("td", null, outcome(r)), h("td", null, r.exit_date ? Charts.fmtDate(r.exit_date) : "–"),
+          h("td", { class: "r" }, r.days == null ? "–" : String(r.days)),
+          r.status === "closed" ? h("td", { class: "r " + (r.net >= 0 ? "up" : "down") }, spct(r.net, 1))
+            : h("td", { class: "r muted", title: "Move so far, before costs" }, r.now == null ? "–" : spct(r.now, 1) + " so far"),
+          h("td", { class: "r small muted" }, r.status === "closed" || r.to_tp == null ? "" : spct(r.to_tp, 1) + " to TP")))))),
+      h("p", { class: "small muted", style: "margin-top:6px" }, "Bought at the close of the signal day, as in the backtest; buying at the next session can be a little better or worse. " +
+        "Prices are corrected for bonus shares and dividends, so a record-date drop is not counted as a stop. The full list of every call is in data/scorecard.csv in the repository."));
+  }
+
   function viewHow() {
     const p = (...x) => h("p", null, ...x);
     return h("div", { class: "prose" },
@@ -827,7 +888,7 @@
   }
 
   // ---------- routing
-  const TABS = [["top", "Top picks"], ["mine", "My stocks"], ["all", "All shares"], ["sectors", "Sectors"], ["track", "Track record"], ["how", "How it works"]];
+  const TABS = [["top", "Top picks"], ["mine", "My stocks"], ["all", "All shares"], ["sectors", "Sectors"], ["track", "Track record"], ["live", "Live record"], ["how", "How it works"]];
   async function route() {
     const hash = decodeURIComponent(location.hash.slice(1)) || "top";
     const [view, arg] = hash.split("/");
@@ -839,6 +900,7 @@
       else if (view === "mine") node = viewMine();
       else if (view === "all") node = viewAll();
       else if (view === "track") node = viewTrack();
+      else if (view === "live") node = await viewLive();
       else if (view === "how") node = viewHow();
       else node = viewTop();
     } catch (e) {

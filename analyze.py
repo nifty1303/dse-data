@@ -28,11 +28,13 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from analysis import backtest, expected as E, features, model, prep, report
+from analysis import backtest, expected as E, features, model, prep, report, scorecard
 
 SITE_DATA = "site/data"
 SIGNALS_CSV = "data/signals.csv"
-SIGNAL_COLS = ["date", "symbol", "horizon", "buy", "sell", "move", "direction", "exp", "hit", "phase", "conf", "verdict", "rank"]
+SIGNAL_COLS = ["date", "symbol", "horizon", "buy", "sell", "move", "direction", "exp", "hit", "phase", "conf", "verdict", "rank",
+               "price", "take_profit", "stop", "sell_by"]   # the plan as shown that day, so each call can be scored later
+SCORECARD_CSV = "data/scorecard.csv"
 BUCKETS = ([-9, 0, 0.1, 0.2, 0.3, 9], ["Below 0 (stop more likely)", "0 to +10 pts", "+10 to +20 pts", "+20 to +30 pts", "+30 pts or more"])
 
 
@@ -184,16 +186,25 @@ def main():
                "contrib": lambda pt: model.race_contributions(live, pt), "extra": extra}}
     tables = report.build(m, panel, ex, H, report.mood(ex["market"]), args.out, args.run)
     log(f"site data written to {args.out}")
-    save_signals(tables, today)
+    sig = save_signals(tables, today, m, panel)
+    sc = scorecard.score(sig[sig["horizon"] == key], m)
+    sc.to_csv(SCORECARD_CSV, index=False)
+    report._dump(scorecard.summary(sc, tcheck, today), f"{args.out}/scorecard.json")
+    log(f"live record: {(sc['status'] == 'closed').sum()} calls closed, {(sc['status'] == 'open').sum()} open")
     t = tables[key]
     print(t.sort_values("rank_score", ascending=False).head(8)[["hit", "stop_p", "stop_dist", "value", "phase", "verdict", "conf"]].round(3).to_string())
     print(t["verdict"].value_counts().to_string())
 
 
-def save_signals(tables, date):
+def save_signals(tables, date, m, panel):
     parts = []
     for key, t in tables.items():
         rec = t.reindex(columns=["buy", "sell", "move", "direction", "exp", "hit", "phase", "conf", "verdict", "rank"]).round(4)
+        price = m.raw_close.iloc[-1].reindex(t.index)
+        rec["price"] = price
+        rec["take_profit"] = price * (1 + t["target_dist"])
+        rec["stop"] = price * (1 - t["stop_dist"])
+        rec["sell_by"] = scorecard.sell_by_date(date)
         rec = rec.reset_index(names="symbol")
         rec.insert(0, "date", str(date))
         rec.insert(2, "horizon", key)
@@ -201,8 +212,12 @@ def save_signals(tables, date):
     new = pd.concat(parts)[SIGNAL_COLS]
     if os.path.exists(SIGNALS_CSV):
         old = pd.read_csv(SIGNALS_CSV).reindex(columns=SIGNAL_COLS)
-        new = pd.concat([old[old["date"] != str(date)], new])
-    new.sort_values(["date", "horizon", "rank"], ascending=[False, False, True]).to_csv(SIGNALS_CSV, index=False)
+        old = scorecard.fill_plan(old[old["date"] != str(date)], m, panel)   # rows saved before the plan was recorded
+        new = pd.concat([old, new])
+    new = new.sort_values(["date", "horizon", "rank"], ascending=[False, False, True])
+    new[["price", "take_profit", "stop"]] = new[["price", "take_profit", "stop"]].round(2)
+    new.to_csv(SIGNALS_CSV, index=False)
+    return new
 
 
 if __name__ == "__main__":

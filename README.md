@@ -14,7 +14,8 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
 
 - `data/prices.csv`: daily prices for every instrument
 - `data/fundamentals.csv`: weekly company snapshots
-- `data/signals.csv`: each day's 1-month plan for every share: chance of reaching +5% before −5% (and the reverse), expected result, journey phase, tag (Buy / Neutral / Sell), confidence and rank. It's a forward record the model can never revise.
+- `data/signals.csv`: each day's 1-month plan for every share: chance of reaching +5% before −5% (and the reverse), expected result, journey phase, tag (Buy / Neutral / Sell), confidence and rank. It's a forward record the model can never revise. From 5 Oct 2026 each row also keeps the plan as shown that day (price, take-profit, stop, sell-by); earlier rows were filled in from the same rules.
+- `data/scorecard.csv`: every call in `signals.csv` scored by what really happened (take-profit / stop / sold at sell-by, exit date, days held, result after costs), or still open. Shown on the site's **Live record** page.
 - `update.py`: the downloader
 - `analyze.py` + `analysis/`: the scoring pipeline
   - `prep.py`: loads the data and corrects bonus-share / dividend price drops
@@ -23,6 +24,7 @@ Dhaka Stock Exchange data, plus a daily scoring site built from it.
   - `expected.py`: the 1-month race (sell at +5%, −5% or after 20 trading days), tag rules, expected result, journey phase (bottoming, early/mid/late rise, topping, early/mid/late fall), verdict rules, projected path, and calendar statistics
   - `backtest.py`: the honest track record
   - `report.py`: the site's data files
+  - `scorecard.py`: the live record (scores every saved call with the backtest's rules)
 - `site/`: the website (plain HTML/JS). `analyze.py` writes its data into `site/data/`.
 
 Run locally: `pip install -r requirements.txt && python analyze.py`, then `python -m http.server -d site` and open http://localhost:8000.

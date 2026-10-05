@@ -154,6 +154,9 @@ def build(m):
     # Turn-around signs for falling shares (used by the Buy rule, not the model).
     W["ma5_vs_ma10"] = (_mean(c, 5, 5) / _mean(c, 10, 10) - 1).clip(-0.5, 0.5)
     W["off_low10"] = (c / l.rolling(10, min_periods=5).min() - 1).clip(0, 2)
+    # Where the price sits against its last month: below the 20-day high, above the 20-day low (journey label).
+    W["dd20"] = (c / c.rolling(20, min_periods=10).max() - 1).clip(-1, 0)
+    W["up20"] = (c / c.rolling(20, min_periods=10).min() - 1).clip(0, 5)
 
     # ---- C. money flow
     med_v120 = _median(v, 120, 40)
@@ -454,5 +457,5 @@ FEATURES = [f for fs in ANGLES.values() for f in fs]
 # shares beat others. Backtests improved without it, so it drives the warning banner only.
 MODEL_ANGLES = {a: cols for a, cols in ANGLES.items() if a != "Market mood"}
 MODEL_FEATURES = [f for fs in MODEL_ANGLES.values() for f in fs]
-INFO_COLS = ["ma5_vs_ma10", "off_low10", "fair_shift", "stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
+INFO_COLS = ["ma5_vs_ma10", "off_low10", "dd20", "up20", "fair_shift", "stop_basis", "target_basis", "up_room", "down_risk", "leg_days", "leg_move", "up_len", "dn_len", "up_pct", "dn_pct",
              "n_legs", "regularity", "exit_days", "med_trades", "trend_eff", "uc_hits250", "history_days"]

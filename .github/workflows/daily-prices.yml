@@ -78,7 +78,7 @@ jobs:
 
       - name: Save today's scores to repository
         run: |
-          git add data/signals.csv
+          git add data/signals.csv data/scorecard.csv
           git diff --cached --quiet || git commit -m "Signals $(date -u +%F)"
           git pull --rebase
           git push

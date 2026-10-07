@@ -1,7 +1,7 @@
 // DSE Signals front end: one plan, the next month (buy now, sell at the share's own take-profit (+5% or more), at its own stop, or on the sell-by date).
 // Reads data/summary.json, data/track.json, data/scorecard.json and data/stocks/<SYM>.json.
 (function () {
-  const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 125, side: "buy", sector: "", phase: "" };
+  const S = { summary: null, track: null, bySym: {}, cache: {}, sort: { key: "rank", dir: 1 }, filters: {}, q: "", range: 125, side: "buy", sector: "", phase: "", paidup: "" };
   const app = () => document.getElementById("app");
   const NON_SHARE = new Set(["Corporate Bond", "Debenture"]);
 
@@ -199,10 +199,15 @@
         h("span", null, r.band == null ? "range not known yet" : `${pct(r.band)} up the regular range`), h("span", null, "2-yr high")),
       leg ? h("div", { class: "small muted" }, `Longer swing (since its last big turn): ${leg} for ${r.leg_days} days${long ? " (longer than usual)" : r.leg_typ ? `, typical ~${r.leg_typ}` : ""}`) : null);
   }
+  const PAIDUP = ["Very low", "Low", "Mid", "Large"];
+  const PAIDUP_RANGE = { "Very low": "under Tk 10 crore", Low: "Tk 10–30 crore", Mid: "Tk 30–100 crore", Large: "over Tk 100 crore" };
+  const cr = x => (x == null ? "–" : `Tk ${num(x, x < 10 ? 1 : 0)} cr`);
   function tags(r) {
     const junk = /junk/i.test(r.type);
     return [h("span", { class: junk ? "tag junk" : "tag" }, r.type),
-      r.stage && r.stage !== "Quiet" ? h("span", { class: junk ? "tag junk" : "tag" }, r.stage + " stage") : null];
+      r.stage && r.stage !== "Quiet" ? h("span", { class: junk ? "tag junk" : "tag" }, r.stage + " stage") : null,
+      r.paidup ? h("span", { class: "tag", title: `Paid-up ${cr(r.paidup_cr)} (${PAIDUP_RANGE[r.paidup]}); free float ${cr(r.float_cr)} held by the public` },
+        `${r.paidup} paid-up · ${cr(r.paidup_cr)}`) : null];
   }
   function move(o) {
     if (o.rank_prev == null) return h("small", { class: "muted" }, "new");
@@ -266,11 +271,12 @@
   }
 
   // ---------- Top picks
-  function pickList(side, sector, phase) {
+  function pickList(side, sector, phase, paidup) {
     const by = side === "sell" ? "sscore" : "score";
-    const pool = S.summary.stocks.filter(r => !NON_SHARE.has(r.sector) && (!sector || r.sector === sector) && (!phase || r.s.phase === phase))
+    const pool = S.summary.stocks.filter(r => !NON_SHARE.has(r.sector) && (!sector || r.sector === sector) && (!phase || r.s.phase === phase)
+      && (!paidup || r.paidup === paidup))
       .sort((a, b) => b.s[by] - a.s[by]);
-    if (sector || phase) return pool.slice(0, 20);
+    if (sector || phase || paidup) return pool.slice(0, 20);
     const out = [], count = {};
     for (const r of pool) {                       // at most 4 per sector when showing all sectors
       if (out.length >= 20) break;
@@ -294,16 +300,16 @@
     return h("div", null, h("div", { class: "search" }, h("span", { class: "ico", "aria-hidden": "true" }, "⌕"), input), results);
   }
   function viewTop() {
-    const s = S.summary, hz = HZ(), side = S.side, sector = S.sector, phase = S.phase || "";
-    const list = pickList(side, sector, phase);
+    const s = S.summary, hz = HZ(), side = S.side, sector = S.sector, phase = S.phase || "", paidup = S.paidup || "";
+    const list = pickList(side, sector, phase, paidup);
     const phases = Object.keys(hz.phases || {}).sort((a, b) => hz.phases[b] - hz.phases[a]);
     const sectors = [...new Set(s.stocks.map(r => r.sector))].filter(x => !NON_SHARE.has(x)).sort();
     const sideBtn = (v, label) => h("button", { class: side === v ? "on" : "", onclick: () => { S.side = v; route(); } }, label);
-    const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}`;
+    const title = `Top ${list.length} to ${side === "sell" ? "sell or avoid" : "buy"}${sector ? " in " + sector : ""}${phase ? " · " + phase.toLowerCase() : ""}${paidup ? " · " + paidup.toLowerCase() + " paid-up" : ""}`;
     const sub = side === "sell"
       ? `Sell = more likely to hit its stop than its take-profit while not cheap, or stretched 20%+ above its usual price level without upside odds. Worst first.`
       : `Buy = take-profit first beats stop first by 15+ points, the price is below its usual level, the share is not Turning down or falling hard, a falling share shows a turn-up sign, and in a gloomy or overheated market it is doing better than the market.`;
-    const showExtras = side === "buy" && !sector && !phase;
+    const showExtras = side === "buy" && !sector && !phase && !paidup;
     const wrongSide = list.filter(r => r.s.verdict !== (side === "buy" ? "Buy" : "Sell")).length;
     return h("div", null,
       moodBanner(s.mood),
@@ -315,7 +321,10 @@
         h("select", { "aria-label": "Sector", onchange: e => { S.sector = e.target.value; route(); } },
           h("option", { value: "" }, "All sectors"), sectors.map(x => h("option", { value: x, selected: sector === x ? "" : null }, x))),
         h("select", { "aria-label": "Journey", onchange: e => { S.phase = e.target.value; route(); } },
-          h("option", { value: "" }, "Any journey"), phases.map(x => h("option", { value: x, selected: phase === x ? "" : null }, `${PHASE_ICON[x] || ""} ${x} (${hz.phases[x]})`)))),
+          h("option", { value: "" }, "Any journey"), phases.map(x => h("option", { value: x, selected: phase === x ? "" : null }, `${PHASE_ICON[x] || ""} ${x} (${hz.phases[x]})`))),
+        h("select", { "aria-label": "Paid-up capital", onchange: e => { S.paidup = e.target.value; route(); } },
+          h("option", { value: "" }, "Any paid-up"), PAIDUP.map(x => h("option", { value: x, selected: paidup === x ? "" : null },
+            `${x} paid-up (${PAIDUP_RANGE[x]}) · ${s.stocks.filter(r => r.paidup === x && !NON_SHARE.has(r.sector)).length}`)))),
       dist(),
       timingTip(),
       wrongSide ? h("div", { class: "note", style: "margin-bottom:12px" },
@@ -365,6 +374,8 @@
     ["conf", "Confidence", r => r.s.conf, r => r.s.conf, "r"],
     ["band", "2-yr range", r => pct(r.band), r => r.band, "r"],
     ["type", "Type", r => r.type, r => r.type],
+    ["paidup_cr", "Paid-up", r => r.paidup ? `${cr(r.paidup_cr)} · ${r.paidup}` : "–", r => r.paidup_cr, "r"],
+    ["float_cr", "Free float", r => cr(r.float_cr), r => r.float_cr, "r"],
   ];
   function quickCard(r) {
     const o = r.s;
@@ -384,7 +395,7 @@
     const results = h("div", { class: "results", "aria-live": "polite" });
     const box = h("div", { class: "tbl-wrap" });
     const count = h("span", { class: "muted small" });
-    const opts = key => [...new Set(s.stocks.map(r => r[key]))].sort();
+    const opts = key => key === "paidup" ? PAIDUP : [...new Set(s.stocks.map(r => r[key]))].sort();
     const sel = (key, label) => h("select", { onchange: e => { f[key] = e.target.value; render(); } },
       h("option", { value: "" }, "All " + label), opts(key).map(v => h("option", { value: v, selected: f[key] === v ? "" : null }, v)));
     function render() {
@@ -397,7 +408,7 @@
           : results.appendChild(h("div", { class: "empty" }, `No share matches “${S.q}”`));
       }
       const col = COLS.find(c => c[0] === S.sort.key) || COLS[4];
-      const rows = s.stocks.filter(r => (!q || r.sym.includes(q)) && ["sector", "type", "cat"].every(k => !f[k] || r[k] === f[k]))
+      const rows = s.stocks.filter(r => (!q || r.sym.includes(q)) && ["sector", "type", "cat", "paidup"].every(k => !f[k] || r[k] === f[k]))
         .sort((a, b) => {
           const x = col[3](a), y = col[3](b);
           if (x == null) return 1; if (y == null) return -1;
@@ -421,7 +432,7 @@
       h("p", { class: "sub" }, "Start typing to see a share's 1-month verdict instantly. Every listed instrument is here; click any row for the full picture."),
       h("div", { class: "search" }, h("span", { class: "ico", "aria-hidden": "true" }, "⌕"), input),
       results,
-      h("div", { class: "filters" }, sel("sector", "sectors"), sel("type", "types"), sel("cat", "categories"), count),
+      h("div", { class: "filters" }, sel("sector", "sectors"), sel("type", "types"), sel("cat", "categories"), sel("paidup", "paid-up sizes"), count),
       box);
   }
 
@@ -596,6 +607,9 @@
       h("ul", null,
         h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs its usual level, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
         h("li", null, h("b", null, "Lead: "), "chance of the take-profit first minus chance of the stop first, in points."),
+        h("li", null, h("b", null, "Paid-up size: "), "paid-up capital (shares issued × face value) in Tk crore: Very low (under 10), Low (10–30), Mid (30–100), Large (over 100). " +
+          "Free float is the part held by the public, so how much actually trades. Small paid-up and small float make a share easy to push up or down: it can jump fast when the market is dry, " +
+          "but falls just as fast and can be hard to sell. In the last two years, in dry markets low paid-up shares rose 10%+ in a month slightly more often (23% vs 20% for large ones) but their typical move was no better."),
         h("li", null, h("b", null, "Journey (what the share is doing now): "), "from its last month and this week, measured against its own usual monthly move, not against an old low. " +
           "Rising / Rising, dipping: up over the month (dipping = down this week). Turning down: up over the month but has given back much of it from its recent high. " +
           "Sideways (lifting / slipping): flat over the month. Turning up: down over the month but lifting clearly off its recent low. Falling / Falling, bouncing: down over the month. " +
@@ -731,7 +745,8 @@
             h("div", { class: "small", style: "margin-top:4px" }, `Average ${spct(m.analog_ret_short)}, ${pct(m.analog_win_short)} rose`))
             : h("div", { class: "empty small" }, "Not enough history yet")),
         h("div", { class: "card" }, h("h3", null, "Company snapshot"), kv([
-          ["Category", info.market_category], ["Paid-up capital", `Tk ${num(info.paid_up_capital_mn, 0)} mn`],
+          ["Category", info.market_category], ["Paid-up capital", d.paidup ? `${cr(d.paidup_cr)} · ${d.paidup} paid-up (${PAIDUP_RANGE[d.paidup]})` : "–"],
+          ["Free float (held by the public)", d.float_cr != null ? `${cr(d.float_cr)} · ${num(info.public_pct, 1)}% of paid-up` : "–"],
           ["Market cap", `Tk ${num(info.market_cap_mn, 0)} mn`], ["Face value", num(info.face_value, 0)],
           ["Reserves", `Tk ${num(info.reserve_mn, 0)} mn`],
           ["Sponsor / Govt", `${num(info.sponsor_pct, 1)}% / ${num(info.govt_pct, 1)}%`],

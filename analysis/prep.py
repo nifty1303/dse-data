@@ -18,6 +18,8 @@ FUNDAMENTALS_CSV = "data/fundamentals.csv"
 CIRCUIT_DROP = -0.105       # beyond DSE's ~10% daily limit
 MIN_PRICE_FOR_ACTION = 2.0  # sub-2 Tk stocks jump >10% on a single tick
 NON_EQUITY = {"Corporate Bond", "Debenture"}
+# Paid-up capital bands in Tk crore (1 crore = Tk 10 mn). "Low paid-up" on DSE usually means under 30 crore.
+PAIDUP_BANDS = ([0, 10, 30, 100, float("inf")], ["Very low", "Low", "Mid", "Large"])
 
 
 @dataclass
@@ -106,6 +108,11 @@ def load():
     info["is_equity"] = ~info["sector"].isin(NON_EQUITY)
     info["is_fund"] = info["sector"].eq("Mutual Funds")
     info["first_date"] = raw_close.apply(lambda s: s.first_valid_index())
+    # Paid-up in Tk crore, its band, and free float: the paid-up held by the public, i.e. how much
+    # share capital actually trades (two firms with the same paid-up differ if sponsors hold 80% of one).
+    info["paidup_cr"] = info["paid_up_capital_mn"] / 10
+    info["float_cr"] = info["paidup_cr"] * info["public_pct"] / 100
+    info["paidup_band"] = pd.cut(info["paidup_cr"], PAIDUP_BANDS[0], labels=PAIDUP_BANDS[1], right=False).astype(object).where(info["paidup_cr"].notna())
 
     m = Market(close.index, symbols, open_, high, low, close, raw_close, volume, value,
                trade, traded, info, actions)

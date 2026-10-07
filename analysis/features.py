@@ -234,6 +234,7 @@ def build(m):
     stat["institute_pct"] = info["institute_pct"].fillna(0) / 100
     stat["foreign_pct"] = info["foreign_pct"].fillna(0) / 100
     stat["public_pct"] = info["public_pct"].fillna(0) / 100
+    stat["log_float"] = np.log1p(info["float_cr"].fillna(0) * 10)          # free float, Tk mn
     stat["reserve_neg"] = (info["reserve_mn"].fillna(0) < 0).astype(float)
     for k in stat.columns:
         W[k] = pd.DataFrame(np.repeat(stat[k].values[None, :], len(c.index), axis=0),

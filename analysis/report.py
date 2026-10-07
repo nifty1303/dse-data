@@ -437,6 +437,7 @@ def build(m, panel, ex, H, market_mood, out_dir, run_kind):
             "sym": sym, "sector": info.at[sym, "sector"], "cat": info.at[sym, "market_category"],
             "paidup": info.at[sym, "paidup_band"] if isinstance(info.at[sym, "paidup_band"], str) else None,
             "paidup_cr": _r(info.at[sym, "paidup_cr"], 1), "float_cr": _r(info.at[sym, "float_cr"], 1),
+            "float_pct": _r(info.at[sym, "public_pct"], 1),
             "type": TYPE_LABEL.get(btype.at[today, sym], "Mixed"), "stage": STAGE_LABEL.get(stage.at[today, sym], "Quiet"),
             "close": _r(close_raw[sym], 2), "chg": _r(close_raw[sym] / prev_raw[sym] - 1, 4),
             "dev2y": _r(dev2[sym], 4), "fair_basis": "1-year" if pt.at[sym, "fair_shift"] == 1 else "2-year", "avg2y": _r(close_raw[sym] / (1 + dev2[sym]), 2) if not pd.isna(dev2[sym]) else None,

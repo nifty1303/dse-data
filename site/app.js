@@ -206,8 +206,16 @@
     const junk = /junk/i.test(r.type);
     return [h("span", { class: junk ? "tag junk" : "tag" }, r.type),
       r.stage && r.stage !== "Quiet" ? h("span", { class: junk ? "tag junk" : "tag" }, r.stage + " stage") : null,
-      r.paidup ? h("span", { class: "tag", title: `Paid-up ${cr(r.paidup_cr)} (${PAIDUP_RANGE[r.paidup]}); free float ${cr(r.float_cr)} held by the public` },
-        `${r.paidup} paid-up · ${cr(r.paidup_cr)}`) : null];
+      r.paidup ? h("span", { class: "tag", title: `Paid-up ${cr(r.paidup_cr)} (${PAIDUP_RANGE[r.paidup]})` },
+        `${r.paidup} paid-up · ${cr(r.paidup_cr)}`) : null,
+      r.float_pct != null ? h("span", { class: thinFloat(r) ? "tag junk" : "tag",
+        title: `${num(r.float_pct, 1)}% of the shares are held by the public (worth ${cr(r.float_cr)} at face value): the part that actually trades. ` +
+          (thinFloat(r) ? "A thin float: a little money can move the price a lot, both ways." : "") },
+        `Free float ${num(r.float_pct, 0)}% · ${cr(r.float_cr)}${thinFloat(r) ? " · thin" : ""}`) : null];
+  }
+  // Thin float: under Tk 10 crore of share capital in public hands, easy to push up or down.
+  function thinFloat(r) {
+    return r.float_cr != null && r.float_cr < 10;
   }
   function move(o) {
     if (o.rank_prev == null) return h("small", { class: "muted" }, "new");
@@ -224,16 +232,16 @@
         md.warning ? h("div", null, md.warning) : null,
         h("details", null, h("summary", null, "Why"), h("ul", null, md.reasons.map(t => h("li", null, t))))));
   }
+  // Shown only when the next session is a Thursday and Sundays are still weak lately (see expected.thursday_stats).
   function timingTip() {
     const t = HZ().thursday;
-    if (!t) return null;
-    const sun = t.same_day.Sunday, thuNext = t.next_day_after.Thursday;
-    if (sun == null || sun > -0.001) return null;
+    if (!t || !t.show || !t.recent) return null;
+    const rc = t.recent;
     return h("div", { class: "note", style: "margin-bottom:16px" },
-      h("b", null, "Timing tip · Thursday → Sunday: "),
-      `over the last two years the average share moved ${spct(sun, 2)} on Sundays, the first session after DSE's Friday–Saturday weekend ` +
-      `(Thursday's close to Sunday's close: ${spct(thuNext, 2)}). If you plan to buy at Thursday's close, waiting until Sunday has saved about ` +
-      `${Math.abs(thuNext * 100).toFixed(2)}% on average. Over a full month the entry day makes little difference, so it doesn't change the verdicts.`);
+      h("b", null, "Timing tip · tomorrow is Thursday: "),
+      `Sundays, the first session after DSE's Friday–Saturday weekend, have been weak lately: in the last ${rc.sessions} Sundays the average share moved ` +
+      `${spct(rc.sunday, 2)} (down on ${pct(rc.sunday_down)} of them; ${spct(rc.sunday_6m, 2)} over 6 months, ${spct(t.same_day.Sunday, 2)} over 2 years). ` +
+      "If you plan to buy at Thursday's close, waiting for Sunday has usually been a little cheaper. Over a full month the entry day makes little difference, so it doesn't change the verdicts.");
   }
   function dist() {
     const v = HZ().verdicts, total = ORDER.reduce((a, k) => a + (v[k] || 0), 0);
@@ -375,7 +383,7 @@
     ["band", "2-yr range", r => pct(r.band), r => r.band, "r"],
     ["type", "Type", r => r.type, r => r.type],
     ["paidup_cr", "Paid-up", r => r.paidup ? `${cr(r.paidup_cr)} · ${r.paidup}` : "–", r => r.paidup_cr, "r"],
-    ["float_cr", "Free float", r => cr(r.float_cr), r => r.float_cr, "r"],
+    ["float_cr", "Free float", r => r.float_pct != null ? `${num(r.float_pct, 0)}% · ${cr(r.float_cr)}` : "–", r => r.float_cr, "r"],
   ];
   function quickCard(r) {
     const o = r.s;
@@ -608,7 +616,7 @@
         h("li", null, h("b", null, "The odds: "), "a model trained walk-forward on two years of DSE data (cycle position, price vs its usual level, journey, trend, money flow, liquidity, risk, relative strength, fundamentals, junk pattern, similar past setups, and the take-profit and stop distances) estimates the chance that the take-profit comes first, that the stop comes first, or neither."),
         h("li", null, h("b", null, "Lead: "), "chance of the take-profit first minus chance of the stop first, in points."),
         h("li", null, h("b", null, "Paid-up size: "), "paid-up capital (shares issued × face value) in Tk crore: Very low (under 10), Low (10–30), Mid (30–100), Large (over 100). " +
-          "Free float is the part held by the public, so how much actually trades. Small paid-up and small float make a share easy to push up or down: it can jump fast when the market is dry, " +
+          "Free float is the part held by the public, so how much actually trades; it is shown at the top of each share as a % and in Tk crore, marked “thin” when under Tk 10 crore. Small paid-up and small float make a share easy to push up or down: it can jump fast when the market is dry, " +
           "but falls just as fast and can be hard to sell. In the last two years, in dry markets low paid-up shares rose 10%+ in a month slightly more often (23% vs 20% for large ones) but their typical move was no better."),
         h("li", null, h("b", null, "Journey (what the share is doing now): "), "from its last month and this week, measured against its own usual monthly move, not against an old low. " +
           "Rising / Rising, dipping: up over the month (dipping = down this week). Turning down: up over the month but has given back much of it from its recent high. " +

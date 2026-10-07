@@ -54,15 +54,26 @@ def calendar_tables(mk, days):
             "weekday_raw": mk.groupby([weekday(d) for d in mk.index]).mean().to_dict()}
 
 
-def thursday_stats(close, universe, dates):
-    """Next-trading-day return of the average share after each weekday's close."""
-    r = close[universe].pct_change(fill_method=None).shift(-1).clip(-0.2, 0.2)
-    nxt = r.mean(axis=1).dropna()
-    by = nxt.groupby([weekday(d) for d in nxt.index]).mean()
-    same = close[universe].pct_change(fill_method=None).clip(-0.2, 0.2).mean(axis=1).dropna()
-    by_day = same.groupby([weekday(d) for d in same.index]).mean()
-    return {"next_day_after": {k: float(v) for k, v in by.items()},
-            "same_day": {k: float(v) for k, v in by_day.items()}}
+def thursday_stats(close, universe, dates, recent=62):
+    """Weekday effects for the timing tip: the average share's move by weekday, over 2 years and the
+    last `recent` sessions (~3 months), and whether the tip applies to the next session.
+
+    The tip ("buying at Thursday's close? Sunday has tended to be cheaper") is shown only when the next
+    session is a Thursday and Sundays are still weak lately (both over 3 and 6 months)."""
+    r = close[universe].pct_change(fill_method=None).clip(-0.2, 0.2).mean(axis=1).dropna()
+    wd = pd.Series([weekday(d) for d in r.index], index=r.index)
+    nxt = r.shift(-1)                                  # next session's move after each day's close
+    def by(x, w):
+        return {k: float(v) for k, v in x.groupby(w).mean().items()}
+    sun = r[wd == "Sunday"]
+    rec, rec6 = sun.iloc[-(recent // 5):], sun.iloc[-(recent * 2 // 5):]
+    last = pd.Timestamp(dates[-1])
+    next_day = WEEKDAYS[(WEEKDAYS.index(last.day_name()) + 1) % 5] if last.day_name() in WEEKDAYS else None
+    return {"next_day_after": by(nxt.dropna(), wd[nxt.notna()]), "same_day": by(r, wd),
+            "recent": {"sessions": int(len(rec)), "sunday": float(rec.mean()), "sunday_down": float((rec < 0).mean()),
+                       "sunday_6m": float(rec6.mean())},
+            "next_session": next_day,
+            "show": bool(next_day == "Thursday" and rec.mean() < -0.001 and rec6.mean() < -0.001)}
 
 
 # ------------------------------------------------------------ journey & verdict
